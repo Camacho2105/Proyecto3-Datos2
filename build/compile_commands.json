@@ -1,0 +1,32 @@
+[
+{
+  "directory": "G:/Proyecto3-Datos2/build",
+  "command": "D:\\w64devkit\\bin\\g++.exe -IG:/Proyecto3-Datos2/server/include -g -std=gnu++17 -o CMakeFiles\\TinySQLDb.dir\\src\\main.cpp.obj -c G:\\Proyecto3-Datos2\\server\\src\\main.cpp",
+  "file": "G:/Proyecto3-Datos2/server/src/main.cpp",
+  "output": "G:/Proyecto3-Datos2/build/CMakeFiles/TinySQLDb.dir/src/main.cpp.obj"
+},
+{
+  "directory": "G:/Proyecto3-Datos2/build",
+  "command": "D:\\w64devkit\\bin\\g++.exe -IG:/Proyecto3-Datos2/server/include -g -std=gnu++17 -o CMakeFiles\\TinySQLDb.dir\\src\\parser.cpp.obj -c G:\\Proyecto3-Datos2\\server\\src\\parser.cpp",
+  "file": "G:/Proyecto3-Datos2/server/src/parser.cpp",
+  "output": "G:/Proyecto3-Datos2/build/CMakeFiles/TinySQLDb.dir/src/parser.cpp.obj"
+},
+{
+  "directory": "G:/Proyecto3-Datos2/build",
+  "command": "D:\\w64devkit\\bin\\g++.exe -IG:/Proyecto3-Datos2/server/include -g -std=gnu++17 -o CMakeFiles\\TinySQLDb.dir\\src\\catalog.cpp.obj -c G:\\Proyecto3-Datos2\\server\\src\\catalog.cpp",
+  "file": "G:/Proyecto3-Datos2/server/src/catalog.cpp",
+  "output": "G:/Proyecto3-Datos2/build/CMakeFiles/TinySQLDb.dir/src/catalog.cpp.obj"
+},
+{
+  "directory": "G:/Proyecto3-Datos2/build",
+  "command": "D:\\w64devkit\\bin\\g++.exe -IG:/Proyecto3-Datos2/server/include -g -std=gnu++17 -o CMakeFiles\\TinySQLDb.dir\\src\\storage.cpp.obj -c G:\\Proyecto3-Datos2\\server\\src\\storage.cpp",
+  "file": "G:/Proyecto3-Datos2/server/src/storage.cpp",
+  "output": "G:/Proyecto3-Datos2/build/CMakeFiles/TinySQLDb.dir/src/storage.cpp.obj"
+},
+{
+  "directory": "G:/Proyecto3-Datos2/build",
+  "command": "D:\\w64devkit\\bin\\g++.exe -IG:/Proyecto3-Datos2/server/include -g -std=gnu++17 -o CMakeFiles\\TinySQLDb.dir\\src\\list.cpp.obj -c G:\\Proyecto3-Datos2\\server\\src\\list.cpp",
+  "file": "G:/Proyecto3-Datos2/server/src/list.cpp",
+  "output": "G:/Proyecto3-Datos2/build/CMakeFiles/TinySQLDb.dir/src/list.cpp.obj"
+}
+]

@@ -1,0 +1,4 @@
+TEC|Estudiante|ID|INTEGER
+TEC|Estudiante|Nombre|VARCHAR(30)
+TECa|Estudiante|ID|INTEGER
+TECa|Estudiante|Nombre|VARCHAR(30)
