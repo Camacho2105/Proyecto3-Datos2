@@ -60,6 +60,9 @@ int main() {
             response["message"] = result.message;
             response["currentDatabase"] = currentDatabase;
             response["executionTimeMs"] = ms;
+            if (!result.data.is_null()) {
+                response["data"] = result.data;
+            }
 
         } catch (...) {
             response["success"] = false;
