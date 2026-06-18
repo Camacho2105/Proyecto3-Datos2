@@ -39,31 +39,42 @@ function App() {
     }
 
     if (result.data && Array.isArray(result.data)) {
+      
+      const serverMessage = <div style={{ color: '#4ade80', marginBottom: '10px' }}>{result.message}</div>;
+
       if (result.data.length === 0) {
-        return <div style={{ color: '#4ade80' }}>Consulta exitosa: 0 filas retornadas.</div>;
+        return (
+          <div>
+            {serverMessage}
+            <div style={{ color: '#fbbf24' }}>0 filas retornadas.</div>
+          </div>
+        );
       }
 
       const columns = Object.keys(result.data[0]);
 
       return (
-        <table style={styles.table}>
-          <thead>
-            <tr>
-              {columns.map((col) => (
-                <th key={col} style={styles.th}>{col}</th>
-              ))}
-            </tr>
-          </thead>
-          <tbody>
-            {result.data.map((row, rowIndex) => (
-              <tr key={rowIndex}>
+        <div>
+          {serverMessage}
+          <table style={styles.table}>
+            <thead>
+              <tr>
                 {columns.map((col) => (
-                  <td key={col} style={styles.td}>{row[col]}</td>
+                  <th key={col} style={styles.th}>{col}</th>
                 ))}
               </tr>
-            ))}
-          </tbody>
-        </table>
+            </thead>
+            <tbody>
+              {result.data.map((row, rowIndex) => (
+                <tr key={rowIndex}>
+                  {columns.map((col) => (
+                    <td key={col} style={styles.td}>{row[col]}</td>
+                  ))}
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
       );
     }
 
