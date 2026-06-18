@@ -14,4 +14,6 @@ add_executable(
     src/catalog.cpp
     src/storage.cpp
     src/list.cpp
+    src/bst.cpp
+    src/quicksort.cpp
 )

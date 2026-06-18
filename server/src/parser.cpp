@@ -1,7 +1,9 @@
-#include "parser.h"
-#include "catalog.h"
-#include "storage.h"
-#include "list.h"
+#include "../include/parser.h"
+#include "../include/catalog.h"
+#include "../include/storage.h"
+#include "../include/list.h"
+#include "../include/bst.h"
+#include "../include/quicksort.h"
 
 #include <string>
 #include <sstream>
@@ -622,6 +624,110 @@ static QueryResponse updateTable(const string& query, const string& currentDatab
     return {true, "Comando ejecutado. Filas actualizadas: " + to_string(updatedCount), currentDatabase};
 }
 
+static QueryResponse createIndex(const string& query, const string& currentDatabase) {
+    if (currentDatabase.empty()) return {false, "Error: primero debe ejecutar SET DATABASE", currentDatabase};
+
+    string upperQuery = query;
+    transform(upperQuery.begin(), upperQuery.end(), upperQuery.begin(), ::toupper);
+
+    size_t idxPos = upperQuery.find("CREATE INDEX ");
+    size_t onPos = upperQuery.find(" ON ");
+    size_t parenStart = upperQuery.find("(");
+    size_t parenEnd = upperQuery.find(")");
+
+    if (idxPos == string::npos || onPos == string::npos || parenStart == string::npos || parenEnd == string::npos) {
+        return {false, "Error: sintaxis inválida. Uso: CREATE INDEX nombre ON tabla (columna);", currentDatabase};
+    }
+
+    // Extraemos los nombres
+    string indexName = trim(query.substr(idxPos + 13, onPos - (idxPos + 13)));
+    string tableName = trim(query.substr(onPos + 4, parenStart - (onPos + 4)));
+    string colName = trim(query.substr(parenStart + 1, parenEnd - (parenStart + 1)));
+
+    if (!tableExists(currentDatabase, tableName)) return {false, "Error: la tabla no existe", currentDatabase};
+
+    // Buscamos el índice de la columna en el catálogo
+    int targetColIndex = -1;
+    int colCount = 0;
+    ifstream catFile("system_catalog/SystemColumns.bin", ios::binary);
+    string line;
+    string prefix = currentDatabase + "|" + tableName + "|";
+    
+    while (getline(catFile, line)) {
+        if (line.rfind(prefix, 0) == 0) {
+            string rest = line.substr(prefix.length());
+            size_t pipe = rest.find('|');
+            if (pipe != string::npos) {
+                if (rest.substr(0, pipe) == colName) targetColIndex = colCount;
+                colCount++;
+            }
+        }
+    }
+    catFile.close();
+
+    if (targetColIndex == -1) return {false, "Error: la columna no existe en la tabla", currentDatabase};
+
+    // Leemos los datos para armar el arreglo que vamos a ordenar
+    string path = "databases/" + currentDatabase + "/" + tableName + ".bin";
+    ifstream file(path, ios::binary);
+    
+    IndexRecord records[1000]; // Arreglo estático para guardar hasta 1000 registros (puedes ampliarlo)
+    int recordCount = 0;
+    int lineNumber = 1;
+
+    if (file.is_open()) {
+        while (getline(file, line) && recordCount < 1000) {
+            if (line.empty()) { lineNumber++; continue; }
+
+            string decryptedLine = descifrarDatos(line);
+            string colValue;
+            size_t start = 0;
+            
+            for (int i = 0; i <= targetColIndex; ++i) {
+                size_t comma = decryptedLine.find(',', start);
+                if (comma == string::npos) colValue = decryptedLine.substr(start);
+                else { colValue = decryptedLine.substr(start, comma - start); start = comma + 1; }
+            }
+            
+            colValue = trim(colValue);
+            if (colValue.size() >= 2 && colValue.front() == '\'' && colValue.back() == '\'') {
+                colValue = colValue.substr(1, colValue.size() - 2);
+            }
+            
+            records[recordCount].key = colValue;
+            records[recordCount].recordLine = lineNumber;
+            recordCount++;
+            lineNumber++;
+        }
+        file.close();
+    }
+
+    // Ordenamos los registros usando tu QUICKSORT
+    if (recordCount > 0) {
+        quickSort(records, 0, recordCount - 1);
+    }
+
+    //Insertamos los datos ordenados en el BST (Árbol Binario de Búsqueda)
+    BST indexTree;
+    for (int i = 0; i < recordCount; ++i) {
+        indexTree.insert(records[i].key, records[i].recordLine);
+    }
+
+    // Guardamos evidencia física del índice creando su archivo .bin correspondiente
+    string indexPath = "databases/" + currentDatabase + "/" + indexName + ".bin";
+    ofstream idxFile(indexPath, ios::binary);
+    if (idxFile.is_open()) {
+        idxFile << "Índice '" << indexName << "' sobre columna '" << colName << "'\n";
+        idxFile << "Datos ordenados e insertados en BST:\n";
+        for (int i = 0; i < recordCount; ++i) {
+            idxFile << records[i].key << " -> Fila " << records[i].recordLine << "\n";
+        }
+        idxFile.close();
+    }
+
+    return {true, "Índice '" + indexName + "' creado y ordenado exitosamente (" + to_string(recordCount) + " registros).", currentDatabase};
+}
+
 QueryResponse executeQuery(const string& rawQuery, string& currentDatabase) {
     string query = trim(rawQuery);
 
@@ -659,6 +765,10 @@ QueryResponse executeQuery(const string& rawQuery, string& currentDatabase) {
 
     if (startsWith(query, "UPDATE ")) {
         return updateTable(query, currentDatabase);
+    }
+    
+    if (startsWith(query, "CREATE INDEX ")) {
+        return createIndex(query, currentDatabase);
     }
 
     return {false, "Error: sentencia no soportada por Estudiante B", currentDatabase};
