@@ -218,28 +218,44 @@ static string descifrarDatos(const string& data) {
     return result;
 }
 
-static QueryResponse insertIntoTable(const string& query, const string& currentDatabase) {
-    
-    if (currentDatabase.empty()) {
-        return {false, "Error: primero debe ejecutar SET DATABASE", currentDatabase};
+static bool isValidInteger(const string& val) {
+    if (val.empty()) return false;
+    size_t start = (val[0] == '-') ? 1 : 0; // Soporta números negativos
+    if (start == val.length()) return false;
+    for (size_t i = start; i < val.length(); i++) {
+        if (!isdigit(val[i])) return false;
     }
+    return true;
+}
 
-   
+static bool isValidDouble(const string& val) {
+    if (val.empty()) return false;
+    size_t start = (val[0] == '-') ? 1 : 0;
+    bool hasDot = false;
+    if (start == val.length()) return false;
+    for (size_t i = start; i < val.length(); i++) {
+        if (val[i] == '.') {
+            if (hasDot) return false; // No puede tener dos puntos
+            hasDot = true;
+        } else if (!isdigit(val[i])) {
+            return false;
+        }
+    }
+    return true;
+}
+
+static QueryResponse insertIntoTable(const string& query, const string& currentDatabase) {
+    if (currentDatabase.empty()) return {false, "Error: primero debe ejecutar SET DATABASE", currentDatabase};
+
     size_t nameStart = string("INSERT INTO").size();
-    
-    
     string upperQuery = query;
     transform(upperQuery.begin(), upperQuery.end(), upperQuery.begin(), ::toupper);
-    size_t valuesPos = upperQuery.find(" VALUES");
     
-    if (valuesPos == string::npos) {
-        return {false, "Error: sintaxis inválida, falta la palabra VALUES", currentDatabase};
-    }
+    size_t valuesPos = upperQuery.find(" VALUES");
+    if (valuesPos == string::npos) return {false, "Error: sintaxis inválida, falta la palabra VALUES", currentDatabase};
 
-   
     string tableName = trim(query.substr(nameStart, valuesPos - nameStart));
     
-   
     size_t parenStart = query.find("(", valuesPos);
     size_t parenEnd = query.rfind(")");
 
@@ -247,36 +263,84 @@ static QueryResponse insertIntoTable(const string& query, const string& currentD
         return {false, "Error: sintaxis inválida, faltan los paréntesis () en VALUES", currentDatabase};
     }
 
-  
     string valuesText = query.substr(parenStart + 1, parenEnd - parenStart - 1);
 
-    if (tableName.empty()) {
-        return {false, "Error: nombre de tabla vacío", currentDatabase};
+    if (tableName.empty()) return {false, "Error: nombre de tabla vacío", currentDatabase};
+    if (!tableExists(currentDatabase, tableName)) return {false, "Error: la tabla no existe en la base de datos", currentDatabase};
+
+    string expectedTypes[100];
+    int colCount = 0;
+    ifstream catFile("system_catalog/SystemColumns.bin", ios::binary);
+    string line;
+    string prefix = currentDatabase + "|" + tableName + "|";
+    
+    while (getline(catFile, line)) {
+        if (line.rfind(prefix, 0) == 0) {
+            string rest = line.substr(prefix.length());
+            size_t p1 = rest.find('|');
+            if (p1 != string::npos) {
+                size_t p2 = rest.find('|', p1 + 1);
+                // Extraemos el tipo de dato de la línea del catálogo
+                string colType = (p2 == string::npos) ? rest.substr(p1 + 1) : rest.substr(p1 + 1, p2 - p1 - 1);
+                if (!colType.empty() && colType.back() == '\r') colType.pop_back(); // Limpieza por si hay saltos de línea ocultos
+                expectedTypes[colCount] = trim(colType);
+                colCount++;
+            }
+        }
+    }
+    catFile.close();
+
+    string actualValues[100];
+    int valCount = 0;
+    size_t start = 0;
+    while (start <= valuesText.length()) {
+        size_t comma = valuesText.find(',', start);
+        if (comma == string::npos) {
+            actualValues[valCount++] = trim(valuesText.substr(start));
+            break;
+        } else {
+            actualValues[valCount++] = trim(valuesText.substr(start, comma - start));
+            start = comma + 1;
+        }
     }
 
-   
-    if (!tableExists(currentDatabase, tableName)) {
-        return {false, "Error: la tabla no existe en la base de datos", currentDatabase};
+    if (valCount != colCount) {
+        return {false, "Error de columnas: La tabla espera " + to_string(colCount) + " valores, pero se enviaron " + to_string(valCount), currentDatabase};
     }
 
+    for (int i = 0; i < colCount; i++) {
+        string t = expectedTypes[i];
+        transform(t.begin(), t.end(), t.begin(), ::toupper);
+        string v = actualValues[i];
+
+        if (t.find("INT") != string::npos) {
+            if (!isValidInteger(v)) {
+                return {false, "Error de tipo (Columna " + to_string(i+1) + "): '" + v + "' no es un INTEGER válido.", currentDatabase};
+            }
+        }
+        else if (t.find("DOUBLE") != string::npos || t.find("FLOAT") != string::npos) {
+            if (!isValidDouble(v)) {
+                return {false, "Error de tipo (Columna " + to_string(i+1) + "): '" + v + "' no es un DOUBLE válido.", currentDatabase};
+            }
+        }
+        else if (t.find("VARCHAR") != string::npos || t.find("DATETIME") != string::npos) {
+            if (v.empty() || v.front() != '\'' || v.back() != '\'') {
+                return {false, "Error de tipo (Columna " + to_string(i+1) + "): '" + v + "' es un texto y debe ir entre comillas simples.", currentDatabase};
+            }
+        }
+    }
 
     string datosEncriptados = cifrarDatos(valuesText);
-
-
     string path = "databases/" + currentDatabase + "/" + tableName + ".bin";
-    
     ofstream file(path, ios::app | ios::binary);
     
-    if (!file.is_open()) {
-        return {false, "Error: No se pudo abrir el archivo para insertar los datos", currentDatabase};
-    }
+    if (!file.is_open()) return {false, "Error: No se pudo abrir el archivo para insertar los datos", currentDatabase};
 
     file << datosEncriptados << '\n';
     file.close();
 
     return {true, "Fila insertada exitosamente en la tabla " + tableName, currentDatabase};
 }
-
 static QueryResponse selectFromTable(const string& query, const string& currentDatabase) {
     if (currentDatabase.empty()) return {false, "Error: primero debe ejecutar SET DATABASE", currentDatabase};
 
