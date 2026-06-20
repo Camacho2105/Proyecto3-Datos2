@@ -244,6 +244,103 @@ static bool isValidDouble(const string& val) {
     return true;
 }
 
+static void rebuildIndex(const string& currentDatabase, const string& tableName, const string& indexName, const string& colName, const string& indexType) {
+    int targetColIndex = -1, colCount = 0;
+    ifstream catFile("system_catalog/SystemColumns.bin", ios::binary);
+    string line;
+    string prefix = currentDatabase + "|" + tableName + "|";
+    
+    while (getline(catFile, line)) {
+        if (line.rfind(prefix, 0) == 0) {
+            string rest = line.substr(prefix.length());
+            size_t pipe = rest.find('|');
+            if (pipe != string::npos) {
+                if (rest.substr(0, pipe) == colName) targetColIndex = colCount;
+                colCount++;
+            }
+        }
+    }
+    catFile.close();
+    if (targetColIndex == -1) return;
+
+    string path = "databases/" + currentDatabase + "/" + tableName + ".bin";
+    ifstream file(path, ios::binary);
+    IndexRecord records[1000];
+    int recordCount = 0;
+    int lineNumber = 1;
+
+    if (file.is_open()) {
+        while (getline(file, line) && recordCount < 1000) {
+            if (line.empty()) { lineNumber++; continue; }
+            string decryptedLine = descifrarDatos(line);
+            string colValue;
+            size_t start = 0;
+            for (int i = 0; i <= targetColIndex; ++i) {
+                size_t comma = decryptedLine.find(',', start);
+                if (comma == string::npos) colValue = decryptedLine.substr(start);
+                else { colValue = decryptedLine.substr(start, comma - start); start = comma + 1; }
+            }
+            colValue = trim(colValue);
+            if (colValue.size() >= 2 && colValue.front() == '\'' && colValue.back() == '\'') colValue = colValue.substr(1, colValue.size() - 2);
+            records[recordCount].key = colValue;
+            records[recordCount].recordLine = lineNumber;
+            recordCount++;
+            lineNumber++;
+        }
+        file.close();
+    }
+
+    if (recordCount > 0) quickSort(records, 0, recordCount - 1);
+
+    if (indexType == "BST") {
+        BST bstIndex;
+        for (int i = 0; i < recordCount; ++i) bstIndex.insert(records[i].key, records[i].recordLine);
+    } else {
+        BTree btreeIndex(3);
+        for (int i = 0; i < recordCount; ++i) btreeIndex.insert(records[i].key, records[i].recordLine);
+    }
+
+    string indexPath = "databases/" + currentDatabase + "/" + indexName + ".bin";
+    ofstream idxFile(indexPath, ios::binary);
+    if (idxFile.is_open()) {
+        idxFile << "INDICE|" << indexType << "|" << colName << "\n";
+        for (int i = 0; i < recordCount; ++i) {
+            idxFile << records[i].key << "|" << records[i].recordLine << "\n";
+        }
+        idxFile.close();
+    }
+}
+
+static void updateAllIndexesForTable(const string& currentDatabase, const string& tableName) {
+    ifstream sysIdx("system_catalog/SystemIndexes.bin", ios::binary);
+    if (!sysIdx.is_open()) return;
+    
+    string line;
+    string prefix = currentDatabase + "|" + tableName + "|";
+    struct IdxData { string name, col, type; };
+    IdxData idxs[20];
+    int count = 0;
+    
+    while (getline(sysIdx, line)) {
+        if (line.rfind(prefix, 0) == 0) {
+            int p1 = line.find('|');
+            int p2 = line.find('|', p1 + 1);
+            int p3 = line.find('|', p2 + 1);
+            int p4 = line.find('|', p3 + 1);
+            idxs[count].name = line.substr(p2 + 1, p3 - p2 - 1);
+            idxs[count].col = line.substr(p3 + 1, p4 - p3 - 1);
+            idxs[count].type = line.substr(p4 + 1);
+            if (!idxs[count].type.empty() && idxs[count].type.back() == '\r') idxs[count].type.pop_back();
+            count++;
+        }
+    }
+    sysIdx.close();
+
+    for (int i = 0; i < count; i++) {
+        rebuildIndex(currentDatabase, tableName, idxs[i].name, idxs[i].col, idxs[i].type);
+    }
+}
+
 static QueryResponse insertIntoTable(const string& query, const string& currentDatabase) {
     if (currentDatabase.empty()) return {false, "Error: primero debe ejecutar SET DATABASE", currentDatabase};
 
@@ -339,6 +436,8 @@ static QueryResponse insertIntoTable(const string& query, const string& currentD
     file << datosEncriptados << '\n';
     file.close();
 
+    updateAllIndexesForTable(currentDatabase, tableName);
+
     return {true, "Fila insertada exitosamente en la tabla " + tableName, currentDatabase};
 }
 static QueryResponse selectFromTable(const string& query, const string& currentDatabase) {
@@ -361,6 +460,26 @@ static QueryResponse selectFromTable(const string& query, const string& currentD
     } else {
         tableName = trim(query.substr(fromPos + 5));
         if (!tableName.empty() && tableName.back() == ';') tableName.pop_back();
+    }
+
+    if (tableName.rfind("System", 0) == 0) {
+        string path = "system_catalog/" + tableName + ".bin";
+        ifstream file(path, ios::binary);
+        nlohmann::json rows = nlohmann::json::array();
+        string line;
+        
+        if (file.is_open()) {
+            while (getline(file, line)) {
+                if (line.empty()) continue;
+                nlohmann::json rowObj;
+                rowObj["Datos_del_Catalogo"] = line; 
+                rows.push_back(rowObj);
+            }
+            file.close();
+            return {true, "Consulta exitosa al catálogo del sistema", currentDatabase, rows};
+        } else {
+            return {false, "Error: No se pudo abrir la tabla de sistema especificada", currentDatabase};
+        }
     }
 
     if (!tableExists(currentDatabase, tableName)) return {false, "Error: la tabla no existe", currentDatabase};
@@ -637,6 +756,8 @@ static QueryResponse deleteFromTable(const string& query, const string& currentD
         rename(tempPath.c_str(), path.c_str());
     }
 
+    updateAllIndexesForTable(currentDatabase, tableName);
+
     return {true, "Comando ejecutado. Filas eliminadas: " + to_string(deletedCount), currentDatabase};
 }
 
@@ -759,6 +880,8 @@ static QueryResponse updateTable(const string& query, const string& currentDatab
         remove(path.c_str());
         rename(tempPath.c_str(), path.c_str());
     }
+
+    updateAllIndexesForTable(currentDatabase, tableName);
 
     return {true, "Comando ejecutado. Filas actualizadas: " + to_string(updatedCount), currentDatabase};
 }
