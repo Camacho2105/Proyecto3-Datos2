@@ -28,5 +28,23 @@
   "command": "D:\\w64devkit\\bin\\g++.exe -IG:/Proyecto3-Datos2/server/include -g -std=gnu++17 -o CMakeFiles\\TinySQLDb.dir\\src\\list.cpp.obj -c G:\\Proyecto3-Datos2\\server\\src\\list.cpp",
   "file": "G:/Proyecto3-Datos2/server/src/list.cpp",
   "output": "G:/Proyecto3-Datos2/build/CMakeFiles/TinySQLDb.dir/src/list.cpp.obj"
+},
+{
+  "directory": "G:/Proyecto3-Datos2/build",
+  "command": "D:\\w64devkit\\bin\\g++.exe -IG:/Proyecto3-Datos2/server/include -g -std=gnu++17 -o CMakeFiles\\TinySQLDb.dir\\src\\bst.cpp.obj -c G:\\Proyecto3-Datos2\\server\\src\\bst.cpp",
+  "file": "G:/Proyecto3-Datos2/server/src/bst.cpp",
+  "output": "G:/Proyecto3-Datos2/build/CMakeFiles/TinySQLDb.dir/src/bst.cpp.obj"
+},
+{
+  "directory": "G:/Proyecto3-Datos2/build",
+  "command": "D:\\w64devkit\\bin\\g++.exe -IG:/Proyecto3-Datos2/server/include -g -std=gnu++17 -o CMakeFiles\\TinySQLDb.dir\\src\\quicksort.cpp.obj -c G:\\Proyecto3-Datos2\\server\\src\\quicksort.cpp",
+  "file": "G:/Proyecto3-Datos2/server/src/quicksort.cpp",
+  "output": "G:/Proyecto3-Datos2/build/CMakeFiles/TinySQLDb.dir/src/quicksort.cpp.obj"
+},
+{
+  "directory": "G:/Proyecto3-Datos2/build",
+  "command": "D:\\w64devkit\\bin\\g++.exe -IG:/Proyecto3-Datos2/server/include -g -std=gnu++17 -o CMakeFiles\\TinySQLDb.dir\\src\\btree.cpp.obj -c G:\\Proyecto3-Datos2\\server\\src\\btree.cpp",
+  "file": "G:/Proyecto3-Datos2/server/src/btree.cpp",
+  "output": "G:/Proyecto3-Datos2/build/CMakeFiles/TinySQLDb.dir/src/btree.cpp.obj"
 }
 ]

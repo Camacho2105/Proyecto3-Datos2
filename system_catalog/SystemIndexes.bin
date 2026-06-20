@@ -1,0 +1,4 @@
+TEAC|NEYSER|Idx_Estudiante_Nombre|Nombre|BTREE
+TEAC|NEYSER|Idx_Estudiante_Id|ID|BST
+TECC|Estudiante|Idx_Nombre|Nombre|BTREE
+TECC|Estudiante|Idx_ID|ID|BST

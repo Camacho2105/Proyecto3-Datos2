@@ -2,3 +2,11 @@ TEC|Estudiante|ID|INTEGER
 TEC|Estudiante|Nombre|VARCHAR(30)
 TECa|Estudiante|ID|INTEGER
 TECa|Estudiante|Nombre|VARCHAR(30)
+TECa|Estudiantes|ID|INTEGER
+TECa|Estudiantes|Nombre|VARCHAR(30)
+TEC|Estudiante|ID|INTEGER
+TEC|Estudiante|Nombre|VARCHAR(30)
+TEAC|NEYSER|ID|INTEGER
+TEAC|NEYSER|Nombre|VARCHAR(30)
+TECC|Estudiante|ID|INTEGER
+TECC|Estudiante|Nombre|VARCHAR(30)

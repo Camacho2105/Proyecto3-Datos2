@@ -94,6 +94,33 @@ build CMakeFiles/TinySQLDb.dir/src/list.cpp.obj: CXX_COMPILER__TinySQLDb_unscann
   OBJECT_FILE_DIR = CMakeFiles\TinySQLDb.dir\src
   TARGET_SUPPORT_DIR = CMakeFiles\TinySQLDb.dir
 
+build CMakeFiles/TinySQLDb.dir/src/bst.cpp.obj: CXX_COMPILER__TinySQLDb_unscanned_Debug G$:/Proyecto3-Datos2/server/src/bst.cpp || cmake_object_order_depends_target_TinySQLDb
+  CONFIG = Debug
+  DEP_FILE = CMakeFiles\TinySQLDb.dir\src\bst.cpp.obj.d
+  FLAGS = -g -std=gnu++17
+  INCLUDES = -IG:/Proyecto3-Datos2/server/include
+  OBJECT_DIR = CMakeFiles\TinySQLDb.dir
+  OBJECT_FILE_DIR = CMakeFiles\TinySQLDb.dir\src
+  TARGET_SUPPORT_DIR = CMakeFiles\TinySQLDb.dir
+
+build CMakeFiles/TinySQLDb.dir/src/quicksort.cpp.obj: CXX_COMPILER__TinySQLDb_unscanned_Debug G$:/Proyecto3-Datos2/server/src/quicksort.cpp || cmake_object_order_depends_target_TinySQLDb
+  CONFIG = Debug
+  DEP_FILE = CMakeFiles\TinySQLDb.dir\src\quicksort.cpp.obj.d
+  FLAGS = -g -std=gnu++17
+  INCLUDES = -IG:/Proyecto3-Datos2/server/include
+  OBJECT_DIR = CMakeFiles\TinySQLDb.dir
+  OBJECT_FILE_DIR = CMakeFiles\TinySQLDb.dir\src
+  TARGET_SUPPORT_DIR = CMakeFiles\TinySQLDb.dir
+
+build CMakeFiles/TinySQLDb.dir/src/btree.cpp.obj: CXX_COMPILER__TinySQLDb_unscanned_Debug G$:/Proyecto3-Datos2/server/src/btree.cpp || cmake_object_order_depends_target_TinySQLDb
+  CONFIG = Debug
+  DEP_FILE = CMakeFiles\TinySQLDb.dir\src\btree.cpp.obj.d
+  FLAGS = -g -std=gnu++17
+  INCLUDES = -IG:/Proyecto3-Datos2/server/include
+  OBJECT_DIR = CMakeFiles\TinySQLDb.dir
+  OBJECT_FILE_DIR = CMakeFiles\TinySQLDb.dir\src
+  TARGET_SUPPORT_DIR = CMakeFiles\TinySQLDb.dir
+
 
 # =============================================================================
 # Link build statements for EXECUTABLE target TinySQLDb
@@ -102,7 +129,7 @@ build CMakeFiles/TinySQLDb.dir/src/list.cpp.obj: CXX_COMPILER__TinySQLDb_unscann
 #############################################
 # Link the executable TinySQLDb.exe
 
-build TinySQLDb.exe: CXX_EXECUTABLE_LINKER__TinySQLDb_Debug CMakeFiles/TinySQLDb.dir/src/main.cpp.obj CMakeFiles/TinySQLDb.dir/src/parser.cpp.obj CMakeFiles/TinySQLDb.dir/src/catalog.cpp.obj CMakeFiles/TinySQLDb.dir/src/storage.cpp.obj CMakeFiles/TinySQLDb.dir/src/list.cpp.obj
+build TinySQLDb.exe: CXX_EXECUTABLE_LINKER__TinySQLDb_Debug CMakeFiles/TinySQLDb.dir/src/main.cpp.obj CMakeFiles/TinySQLDb.dir/src/parser.cpp.obj CMakeFiles/TinySQLDb.dir/src/catalog.cpp.obj CMakeFiles/TinySQLDb.dir/src/storage.cpp.obj CMakeFiles/TinySQLDb.dir/src/list.cpp.obj CMakeFiles/TinySQLDb.dir/src/bst.cpp.obj CMakeFiles/TinySQLDb.dir/src/quicksort.cpp.obj CMakeFiles/TinySQLDb.dir/src/btree.cpp.obj
   CONFIG = Debug
   FLAGS = -g
   LINK_LIBRARIES = -lkernel32 -luser32 -lgdi32 -lwinspool -lshell32 -lole32 -loleaut32 -luuid -lcomdlg32 -ladvapi32
