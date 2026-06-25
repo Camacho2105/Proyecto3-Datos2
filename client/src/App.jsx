@@ -9,22 +9,46 @@ function App() {
   const executeQuery = async () => {
     if (!query.trim()) return;
 
-    try {
-      const response = await axios.post('http://localhost:8080/query', {
-        query: query
-      });
+    const statements = query
+      .split(";")
+      .map((s) => s.trim())
+      .filter((s) => s.length > 0);
 
-      // Actualizamos la base de datos actual si viene en la respuesta
-      if (response.data.currentDatabase !== undefined) {
-        setCurrentDb(response.data.currentDatabase);
+    for (const statement of statements) {
+      try {
+        const response = await axios.post("http://localhost:8080/query", {
+          query: statement + ";",
+        });
+
+        if (response.data.currentDatabase !== undefined) {
+          setCurrentDb(response.data.currentDatabase);
+        }
+
+        setHistory((prev) => [
+          ...prev,
+          {
+            command: statement + ";",
+            result: response.data,
+          },
+        ]);
+      } catch (error) {
+        const errorMessage =
+          error.response?.data?.message || "Error de conexión con el servidor.";
+
+        setHistory((prev) => [
+          ...prev,
+          {
+            command: statement + ";",
+            result: {
+              success: false,
+              message: errorMessage,
+            },
+          },
+        ]);
       }
-
-      setHistory(prev => [...prev, { command: query, result: response.data }]);
-      setQuery(''); 
-    } catch (error) {
-      const errorMessage = error.response?.data?.message || 'Error de conexión con el servidor.';
-      setHistory(prev => [...prev, { command: query, result: { success: false, message: errorMessage } }]);
     }
+
+    setQuery("");
   };
 
   const handleKeyDown = (e) => {
@@ -104,12 +128,10 @@ function App() {
       <div style={styles.inputArea}>
         {/* Usamos currentDb para mostrar en qué base estamos */}
         <span style={styles.prompt}>{currentDb ? `${currentDb} >` : '>'}</span>
-        <input
-          type="text"
+        <textarea
           value={query}
           onChange={(e) => setQuery(e.target.value)}
-          onKeyDown={handleKeyDown}
-          placeholder="Escribe tu sentencia SQL aquí y presiona Enter..."
+          placeholder="Escribe una o varias sentencias SQL separadas por ;"
           style={styles.input}
           autoFocus
         />
@@ -127,7 +149,18 @@ const styles = {
   command: { color: '#fbbf24', fontWeight: 'bold', marginBottom: '5px' },
   inputArea: { display: 'flex', gap: '10px', alignItems: 'center' },
   prompt: { color: '#fbbf24', fontSize: '1.2rem', fontWeight: 'bold' },
-  input: { flex: 1, padding: '10px', fontSize: '1rem', backgroundColor: '#1e1e1e', color: '#fff', border: '1px solid #333', borderRadius: '4px', fontFamily: 'monospace' },
+  input: {
+  flex: 1,
+  padding: '10px',
+  fontSize: '1rem',
+  backgroundColor: '#1e1e1e',
+  color: '#fff',
+  border: '1px solid #333',
+  borderRadius: '4px',
+  fontFamily: 'monospace',
+  minHeight: '90px',
+  resize: 'vertical'
+},
   button: { padding: '10px 20px', fontSize: '1rem', backgroundColor: '#38bdf8', color: '#000', border: 'none', borderRadius: '4px', cursor: 'pointer', fontWeight: 'bold' },
   table: { width: '100%', borderCollapse: 'collapse', marginTop: '10px', marginBottom: '10px', backgroundColor: '#1e1e1e' },
   th: { border: '1px solid #333', padding: '8px', backgroundColor: '#2a2a2a', color: '#38bdf8', textAlign: 'left' },

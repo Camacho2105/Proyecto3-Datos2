@@ -11,16 +11,17 @@
 #include <algorithm>
 #include <cctype>
 #include <fstream>
-
+#include <vector>
+#include <cstdio>
 
 using namespace std;
 
 static string trim(string s) {
-    while (!s.empty() && isspace(s.front())) {
+    while (!s.empty() && isspace((unsigned char)s.front())) {
         s.erase(s.begin());
     }
 
-    while (!s.empty() && isspace(s.back())) {
+    while (!s.empty() && isspace((unsigned char)s.back())) {
         s.pop_back();
     }
 
@@ -28,7 +29,9 @@ static string trim(string s) {
 }
 
 static string upper(string s) {
-    transform(s.begin(), s.end(), s.begin(), ::toupper);
+    transform(s.begin(), s.end(), s.begin(), [](unsigned char c) {
+        return toupper(c);
+    });
     return s;
 }
 
@@ -36,14 +39,543 @@ static bool startsWith(const string& text, const string& prefix) {
     return upper(text).rfind(prefix, 0) == 0;
 }
 
-static QueryResponse createDatabase(const string& query) {
-    string name = trim(query.substr(15));
+static string removeSemicolon(string s) {
+    s = trim(s);
+    if (!s.empty() && s.back() == ';') {
+        s.pop_back();
+    }
+    return trim(s);
+}
 
-    if (!name.empty() && name.back() == ';') {
-        name.pop_back();
+static string stripQuotes(string s) {
+    s = trim(s);
+    if (s.size() >= 2) {
+        if ((s.front() == '\'' && s.back() == '\'') ||
+            (s.front() == '"' && s.back() == '"')) {
+            return s.substr(1, s.size() - 2);
+        }
+    }
+    return s;
+}
+
+static vector<string> splitCSV(const string& text) {
+    vector<string> result;
+    string current;
+    bool inSingle = false;
+    bool inDouble = false;
+
+    for (char c : text) {
+        if (c == '\'' && !inDouble) {
+            inSingle = !inSingle;
+            current += c;
+        } else if (c == '"' && !inSingle) {
+            inDouble = !inDouble;
+            current += c;
+        } else if (c == ',' && !inSingle && !inDouble) {
+            result.push_back(trim(current));
+            current.clear();
+        } else {
+            current += c;
+        }
     }
 
-    name = trim(name);
+    if (!current.empty() || !text.empty()) {
+        result.push_back(trim(current));
+    }
+
+    return result;
+}
+
+static bool isValidInteger(const string& val) {
+    string v = stripQuotes(val);
+    if (v.empty()) return false;
+
+    size_t start = 0;
+    if (v[0] == '-') start = 1;
+    if (start == v.length()) return false;
+
+    for (size_t i = start; i < v.length(); i++) {
+        if (!isdigit((unsigned char)v[i])) return false;
+    }
+
+    return true;
+}
+
+static bool isValidDouble(const string& val) {
+    string v = stripQuotes(val);
+    if (v.empty()) return false;
+
+    size_t start = 0;
+    if (v[0] == '-') start = 1;
+    if (start == v.length()) return false;
+
+    bool hasDot = false;
+
+    for (size_t i = start; i < v.length(); i++) {
+        if (v[i] == '.') {
+            if (hasDot) return false;
+            hasDot = true;
+        } else if (!isdigit((unsigned char)v[i])) {
+            return false;
+        }
+    }
+
+    return true;
+}
+
+static bool isQuotedText(const string& val) {
+    string v = trim(val);
+    if (v.size() < 2) return false;
+
+    return (v.front() == '\'' && v.back() == '\'') ||
+           (v.front() == '"' && v.back() == '"');
+}
+
+static bool isValidTypeDefinition(const string& type) {
+    string t = upper(trim(type));
+
+    if (t == "INTEGER") return true;
+    if (t == "DOUBLE") return true;
+    if (t == "DATETIME") return true;
+
+    if (t.rfind("VARCHAR(", 0) == 0 && t.back() == ')') {
+        string number = t.substr(8, t.size() - 9);
+        if (number.empty()) return false;
+
+        for (char c : number) {
+            if (!isdigit((unsigned char)c)) return false;
+        }
+
+        return stoi(number) > 0;
+    }
+
+    return false;
+}
+
+static bool validateValueForType(const string& value, const string& type, string& error) {
+    string t = upper(trim(type));
+    string v = trim(value);
+
+    if (t == "INTEGER") {
+        if (!isValidInteger(v)) {
+            error = "'" + v + "' no es un INTEGER válido.";
+            return false;
+        }
+        return true;
+    }
+
+    if (t == "DOUBLE") {
+        if (!isValidDouble(v)) {
+            error = "'" + v + "' no es un DOUBLE válido.";
+            return false;
+        }
+        return true;
+    }
+
+    if (t.rfind("VARCHAR(", 0) == 0) {
+        if (!isQuotedText(v)) {
+            error = "'" + v + "' debe ir entre comillas simples o dobles.";
+            return false;
+        }
+
+        string number = t.substr(8, t.size() - 9);
+        int maxLen = stoi(number);
+        string clean = stripQuotes(v);
+
+        if ((int)clean.size() > maxLen) {
+            error = "'" + clean + "' excede el tamaño máximo VARCHAR(" + to_string(maxLen) + ").";
+            return false;
+        }
+
+        return true;
+    }
+
+    if (t == "DATETIME") {
+        if (!isQuotedText(v)) {
+            error = "'" + v + "' debe ir entre comillas para DATETIME.";
+            return false;
+        }
+
+        return true;
+    }
+
+    error = "tipo de dato no soportado: " + type;
+    return false;
+}
+
+static string cifrarDatos(const string& data) {
+    string result = data;
+    for (size_t i = 0; i < data.size(); ++i) {
+        result[i] = result[i] + 3;
+    }
+    return result;
+}
+
+static string descifrarDatos(const string& data) {
+    string result = data;
+    for (size_t i = 0; i < data.size(); ++i) {
+        result[i] = result[i] - 3;
+    }
+    return result;
+}
+
+static bool loadColumns(
+    const string& currentDatabase,
+    const string& tableName,
+    vector<string>& colNames,
+    vector<string>& colTypes
+) {
+    ifstream catFile("system_catalog/SystemColumns.bin", ios::binary);
+    string line;
+    string prefix = currentDatabase + "|" + tableName + "|";
+
+    while (getline(catFile, line)) {
+        if (!line.empty() && line.back() == '\r') line.pop_back();
+
+        if (line.rfind(prefix, 0) == 0) {
+            string rest = line.substr(prefix.length());
+            size_t pipe = rest.find('|');
+
+            if (pipe != string::npos) {
+                string colName = rest.substr(0, pipe);
+                string colType = rest.substr(pipe + 1);
+
+                colNames.push_back(trim(colName));
+                colTypes.push_back(trim(colType));
+            }
+        }
+    }
+
+    catFile.close();
+    return !colNames.empty();
+}
+
+static int findColumnIndex(const vector<string>& cols, const string& name) {
+    for (int i = 0; i < (int)cols.size(); i++) {
+        if (cols[i] == name) return i;
+    }
+    return -1;
+}
+
+static vector<string> parseRecordValues(const string& decryptedLine) {
+    return splitCSV(decryptedLine);
+}
+
+static string normalizeStoredValue(string v) {
+    v = trim(v);
+    return stripQuotes(v);
+}
+
+struct Condition {
+    bool active = false;
+    string column;
+    string op;
+    string value;
+};
+
+static Condition parseCondition(string condition) {
+    Condition c;
+    condition = removeSemicolon(condition);
+
+    if (condition.empty()) return c;
+
+    string up = upper(condition);
+
+    size_t pos = up.find(" LIKE ");
+    if (pos != string::npos) {
+        c.active = true;
+        c.column = trim(condition.substr(0, pos));
+        c.op = "LIKE";
+        c.value = stripQuotes(trim(condition.substr(pos + 6)));
+        return c;
+    }
+
+    pos = up.find(" NOT ");
+    if (pos != string::npos) {
+        c.active = true;
+        c.column = trim(condition.substr(0, pos));
+        c.op = "NOT";
+        c.value = stripQuotes(trim(condition.substr(pos + 5)));
+        return c;
+    }
+
+    pos = condition.find("==");
+    if (pos != string::npos) {
+        c.active = true;
+        c.column = trim(condition.substr(0, pos));
+        c.op = "=";
+        c.value = stripQuotes(trim(condition.substr(pos + 2)));
+        return c;
+    }
+
+    pos = condition.find('=');
+    if (pos != string::npos) {
+        c.active = true;
+        c.column = trim(condition.substr(0, pos));
+        c.op = "=";
+        c.value = stripQuotes(trim(condition.substr(pos + 1)));
+        return c;
+    }
+
+    pos = condition.find('>');
+    if (pos != string::npos) {
+        c.active = true;
+        c.column = trim(condition.substr(0, pos));
+        c.op = ">";
+        c.value = stripQuotes(trim(condition.substr(pos + 1)));
+        return c;
+    }
+
+    pos = condition.find('<');
+    if (pos != string::npos) {
+        c.active = true;
+        c.column = trim(condition.substr(0, pos));
+        c.op = "<";
+        c.value = stripQuotes(trim(condition.substr(pos + 1)));
+        return c;
+    }
+
+    return c;
+}
+
+static bool isNumber(const string& s) {
+    return isValidInteger(s) || isValidDouble(s);
+}
+
+static bool compareValues(string left, string op, string right) {
+    left = normalizeStoredValue(left);
+    right = stripQuotes(trim(right));
+
+    if (op == "=") return left == right;
+    if (op == "NOT") return left != right;
+
+    if (op == "LIKE") {
+        string pattern = right;
+
+        pattern.erase(remove(pattern.begin(), pattern.end(), '*'), pattern.end());
+        pattern.erase(remove(pattern.begin(), pattern.end(), '%'), pattern.end());
+
+        return left.find(pattern) != string::npos;
+    }
+
+    if (op == ">" || op == "<") {
+        if (isNumber(left) && isNumber(right)) {
+            double a = stod(left);
+            double b = stod(right);
+
+            if (op == ">") return a > b;
+            if (op == "<") return a < b;
+        }
+
+        if (op == ">") return left > right;
+        if (op == "<") return left < right;
+    }
+
+    return false;
+}
+
+static void rebuildIndex(
+    const string& currentDatabase,
+    const string& tableName,
+    const string& indexName,
+    const string& colName,
+    const string& indexType
+) {
+    vector<string> colNames;
+    vector<string> colTypes;
+    loadColumns(currentDatabase, tableName, colNames, colTypes);
+
+    int targetColIndex = findColumnIndex(colNames, colName);
+    if (targetColIndex == -1) return;
+
+    string path = "databases/" + currentDatabase + "/" + tableName + ".bin";
+    ifstream file(path, ios::binary);
+
+    IndexRecord records[1000];
+    int recordCount = 0;
+    int lineNumber = 1;
+    string line;
+
+    if (file.is_open()) {
+        while (getline(file, line) && recordCount < 1000) {
+            if (line.empty()) {
+                lineNumber++;
+                continue;
+            }
+
+            string decryptedLine = descifrarDatos(line);
+            vector<string> values = parseRecordValues(decryptedLine);
+
+            if (targetColIndex < (int)values.size()) {
+                records[recordCount].key = normalizeStoredValue(values[targetColIndex]);
+                records[recordCount].recordLine = lineNumber;
+                recordCount++;
+            }
+
+            lineNumber++;
+        }
+
+        file.close();
+    }
+
+    if (recordCount > 0) {
+        quickSort(records, 0, recordCount - 1);
+    }
+
+    if (indexType == "BST") {
+        BST bstIndex;
+        for (int i = 0; i < recordCount; ++i) {
+            bstIndex.insert(records[i].key, records[i].recordLine);
+        }
+    } else {
+        BTree btreeIndex(3);
+        for (int i = 0; i < recordCount; ++i) {
+            btreeIndex.insert(records[i].key, records[i].recordLine);
+        }
+    }
+
+    string indexPath = "databases/" + currentDatabase + "/" + indexName + ".bin";
+    ofstream idxFile(indexPath, ios::binary);
+
+    if (idxFile.is_open()) {
+        idxFile << "INDICE|" << indexType << "|" << colName << "\n";
+
+        for (int i = 0; i < recordCount; ++i) {
+            idxFile << records[i].key << "|" << records[i].recordLine << "\n";
+        }
+
+        idxFile.close();
+    }
+}
+
+static void updateAllIndexesForTable(const string& currentDatabase, const string& tableName) {
+    ifstream sysIdx("system_catalog/SystemIndexes.bin", ios::binary);
+    if (!sysIdx.is_open()) return;
+
+    string line;
+    string prefix = currentDatabase + "|" + tableName + "|";
+
+    struct IdxData {
+        string name;
+        string col;
+        string type;
+    };
+
+    vector<IdxData> indexes;
+
+    while (getline(sysIdx, line)) {
+        if (!line.empty() && line.back() == '\r') line.pop_back();
+
+        if (line.rfind(prefix, 0) == 0) {
+            vector<string> parts = splitCSV("");
+            size_t p1 = line.find('|');
+            size_t p2 = line.find('|', p1 + 1);
+            size_t p3 = line.find('|', p2 + 1);
+            size_t p4 = line.find('|', p3 + 1);
+
+            if (p1 != string::npos && p2 != string::npos &&
+                p3 != string::npos && p4 != string::npos) {
+                IdxData idx;
+                idx.name = line.substr(p2 + 1, p3 - p2 - 1);
+                idx.col = line.substr(p3 + 1, p4 - p3 - 1);
+                idx.type = line.substr(p4 + 1);
+                indexes.push_back(idx);
+            }
+        }
+    }
+
+    sysIdx.close();
+
+    for (const auto& idx : indexes) {
+        rebuildIndex(currentDatabase, tableName, idx.name, idx.col, idx.type);
+    }
+}
+
+static bool indexedValueExists(
+    const string& currentDatabase,
+    const string& tableName,
+    const string& colName,
+    const string& value
+) {
+    vector<string> colNames;
+    vector<string> colTypes;
+    loadColumns(currentDatabase, tableName, colNames, colTypes);
+
+    int colIndex = findColumnIndex(colNames, colName);
+    if (colIndex == -1) return false;
+
+    string path = "databases/" + currentDatabase + "/" + tableName + ".bin";
+    ifstream file(path, ios::binary);
+    string line;
+    string cleanValue = normalizeStoredValue(value);
+
+    while (getline(file, line)) {
+        if (line.empty()) continue;
+
+        string decryptedLine = descifrarDatos(line);
+        vector<string> values = parseRecordValues(decryptedLine);
+
+        if (colIndex < (int)values.size()) {
+            if (normalizeStoredValue(values[colIndex]) == cleanValue) {
+                file.close();
+                return true;
+            }
+        }
+    }
+
+    file.close();
+    return false;
+}
+
+static bool checkDuplicateForIndexes(
+    const string& currentDatabase,
+    const string& tableName,
+    const vector<string>& values,
+    string& error
+) {
+    vector<string> colNames;
+    vector<string> colTypes;
+    loadColumns(currentDatabase, tableName, colNames, colTypes);
+
+    ifstream sysIdx("system_catalog/SystemIndexes.bin", ios::binary);
+    if (!sysIdx.is_open()) return true;
+
+    string line;
+    string prefix = currentDatabase + "|" + tableName + "|";
+
+    while (getline(sysIdx, line)) {
+        if (!line.empty() && line.back() == '\r') line.pop_back();
+
+        if (line.rfind(prefix, 0) == 0) {
+            size_t p1 = line.find('|');
+            size_t p2 = line.find('|', p1 + 1);
+            size_t p3 = line.find('|', p2 + 1);
+            size_t p4 = line.find('|', p3 + 1);
+
+            if (p1 == string::npos || p2 == string::npos ||
+                p3 == string::npos || p4 == string::npos) {
+                continue;
+            }
+
+            string colName = line.substr(p3 + 1, p4 - p3 - 1);
+            int colIndex = findColumnIndex(colNames, colName);
+
+            if (colIndex != -1 && colIndex < (int)values.size()) {
+                if (indexedValueExists(currentDatabase, tableName, colName, values[colIndex])) {
+                    error = "Error: valor duplicado en columna indexada '" + colName + "': " + normalizeStoredValue(values[colIndex]);
+                    sysIdx.close();
+                    return false;
+                }
+            }
+        }
+    }
+
+    sysIdx.close();
+    return true;
+}
+
+static QueryResponse createDatabase(const string& query) {
+    string name = removeSemicolon(query.substr(15));
 
     if (name.empty()) {
         return {false, "Error: nombre de base de datos vacío", ""};
@@ -65,13 +597,7 @@ static QueryResponse createDatabase(const string& query) {
 }
 
 static QueryResponse setDatabase(const string& query, string& currentDatabase) {
-    string name = trim(query.substr(12));
-
-    if (!name.empty() && name.back() == ';') {
-        name.pop_back();
-    }
-
-    name = trim(name);
+    string name = removeSemicolon(query.substr(12));
 
     if (name.empty()) {
         return {false, "Error: nombre de base de datos vacío", currentDatabase};
@@ -95,11 +621,17 @@ static QueryResponse createTable(const string& query, const string& currentDatab
     size_t parenStart = query.find("(");
     size_t parenEnd = query.rfind(")");
 
-    if (parenStart == string::npos || parenEnd == string::npos) {
+    if (parenStart == string::npos || parenEnd == string::npos || parenStart >= parenEnd) {
         return {false, "Error: sintaxis inválida en CREATE TABLE", currentDatabase};
     }
 
     string tableName = trim(query.substr(nameStart, parenStart - nameStart));
+
+    if (upper(tableName).size() >= 2 &&
+        upper(tableName).substr(upper(tableName).size() - 2) == "AS") {
+        tableName = trim(tableName.substr(0, tableName.size() - 2));
+    }
+
     string columnsText = query.substr(parenStart + 1, parenEnd - parenStart - 1);
 
     if (tableName.empty()) {
@@ -113,25 +645,12 @@ static QueryResponse createTable(const string& query, const string& currentDatab
     ColumnList columns;
     initColumnList(columns);
 
-    size_t start = 0;
+    vector<string> definitions = splitCSV(columnsText);
 
-    while (start < columnsText.length()) {
-        size_t comma = columnsText.find(",", start);
-        string def;
-
-        if (comma == string::npos) {
-            def = columnsText.substr(start);
-            start = columnsText.length();
-        } else {
-            def = columnsText.substr(start, comma - start);
-            start = comma + 1;
-        }
-
+    for (string def : definitions) {
         def = trim(def);
 
-        if (def.empty()) {
-            continue;
-        }
+        if (def.empty()) continue;
 
         size_t space = def.find(" ");
 
@@ -148,7 +667,12 @@ static QueryResponse createTable(const string& query, const string& currentDatab
             return {false, "Error: columna inválida: " + def, currentDatabase};
         }
 
-        addColumn(columns, colName, colType);
+        if (!isValidTypeDefinition(colType)) {
+            freeColumnList(columns);
+            return {false, "Error: tipo de dato inválido: " + colType, currentDatabase};
+        }
+
+        addColumn(columns, colName, upper(colType));
     }
 
     if (columns.head == nullptr) {
@@ -174,13 +698,7 @@ static QueryResponse dropTable(const string& query, const string& currentDatabas
         return {false, "Error: primero debe ejecutar SET DATABASE", currentDatabase};
     }
 
-    string tableName = trim(query.substr(10));
-
-    if (!tableName.empty() && tableName.back() == ';') {
-        tableName.pop_back();
-    }
-
-    tableName = trim(tableName);
+    string tableName = removeSemicolon(query.substr(10));
 
     if (tableName.empty()) {
         return {false, "Error: nombre de tabla vacío", currentDatabase};
@@ -200,266 +718,134 @@ static QueryResponse dropTable(const string& query, const string& currentDatabas
     return {true, "Tabla eliminada: " + tableName, currentDatabase};
 }
 
-//Encriptado César
-static string cifrarDatos(const string& data) {
-    string result = data;
-    for (size_t i = 0; i < data.size(); ++i) {
-        result[i] = result[i] + 3; 
-    }
-    return result;
-}
-
-
-static string descifrarDatos(const string& data) {
-    string result = data;
-    for (size_t i = 0; i < data.size(); ++i) {
-        result[i] = result[i] - 3;
-    }
-    return result;
-}
-
-static bool isValidInteger(const string& val) {
-    if (val.empty()) return false;
-    size_t start = (val[0] == '-') ? 1 : 0; // Soporta números negativos
-    if (start == val.length()) return false;
-    for (size_t i = start; i < val.length(); i++) {
-        if (!isdigit(val[i])) return false;
-    }
-    return true;
-}
-
-static bool isValidDouble(const string& val) {
-    if (val.empty()) return false;
-    size_t start = (val[0] == '-') ? 1 : 0;
-    bool hasDot = false;
-    if (start == val.length()) return false;
-    for (size_t i = start; i < val.length(); i++) {
-        if (val[i] == '.') {
-            if (hasDot) return false; // No puede tener dos puntos
-            hasDot = true;
-        } else if (!isdigit(val[i])) {
-            return false;
-        }
-    }
-    return true;
-}
-
-static void rebuildIndex(const string& currentDatabase, const string& tableName, const string& indexName, const string& colName, const string& indexType) {
-    int targetColIndex = -1, colCount = 0;
-    ifstream catFile("system_catalog/SystemColumns.bin", ios::binary);
-    string line;
-    string prefix = currentDatabase + "|" + tableName + "|";
-    
-    while (getline(catFile, line)) {
-        if (line.rfind(prefix, 0) == 0) {
-            string rest = line.substr(prefix.length());
-            size_t pipe = rest.find('|');
-            if (pipe != string::npos) {
-                if (rest.substr(0, pipe) == colName) targetColIndex = colCount;
-                colCount++;
-            }
-        }
-    }
-    catFile.close();
-    if (targetColIndex == -1) return;
-
-    string path = "databases/" + currentDatabase + "/" + tableName + ".bin";
-    ifstream file(path, ios::binary);
-    IndexRecord records[1000];
-    int recordCount = 0;
-    int lineNumber = 1;
-
-    if (file.is_open()) {
-        while (getline(file, line) && recordCount < 1000) {
-            if (line.empty()) { lineNumber++; continue; }
-            string decryptedLine = descifrarDatos(line);
-            string colValue;
-            size_t start = 0;
-            for (int i = 0; i <= targetColIndex; ++i) {
-                size_t comma = decryptedLine.find(',', start);
-                if (comma == string::npos) colValue = decryptedLine.substr(start);
-                else { colValue = decryptedLine.substr(start, comma - start); start = comma + 1; }
-            }
-            colValue = trim(colValue);
-            if (colValue.size() >= 2 && colValue.front() == '\'' && colValue.back() == '\'') colValue = colValue.substr(1, colValue.size() - 2);
-            records[recordCount].key = colValue;
-            records[recordCount].recordLine = lineNumber;
-            recordCount++;
-            lineNumber++;
-        }
-        file.close();
-    }
-
-    if (recordCount > 0) quickSort(records, 0, recordCount - 1);
-
-    if (indexType == "BST") {
-        BST bstIndex;
-        for (int i = 0; i < recordCount; ++i) bstIndex.insert(records[i].key, records[i].recordLine);
-    } else {
-        BTree btreeIndex(3);
-        for (int i = 0; i < recordCount; ++i) btreeIndex.insert(records[i].key, records[i].recordLine);
-    }
-
-    string indexPath = "databases/" + currentDatabase + "/" + indexName + ".bin";
-    ofstream idxFile(indexPath, ios::binary);
-    if (idxFile.is_open()) {
-        idxFile << "INDICE|" << indexType << "|" << colName << "\n";
-        for (int i = 0; i < recordCount; ++i) {
-            idxFile << records[i].key << "|" << records[i].recordLine << "\n";
-        }
-        idxFile.close();
-    }
-}
-
-static void updateAllIndexesForTable(const string& currentDatabase, const string& tableName) {
-    ifstream sysIdx("system_catalog/SystemIndexes.bin", ios::binary);
-    if (!sysIdx.is_open()) return;
-    
-    string line;
-    string prefix = currentDatabase + "|" + tableName + "|";
-    struct IdxData { string name, col, type; };
-    IdxData idxs[20];
-    int count = 0;
-    
-    while (getline(sysIdx, line)) {
-        if (line.rfind(prefix, 0) == 0) {
-            int p1 = line.find('|');
-            int p2 = line.find('|', p1 + 1);
-            int p3 = line.find('|', p2 + 1);
-            int p4 = line.find('|', p3 + 1);
-            idxs[count].name = line.substr(p2 + 1, p3 - p2 - 1);
-            idxs[count].col = line.substr(p3 + 1, p4 - p3 - 1);
-            idxs[count].type = line.substr(p4 + 1);
-            if (!idxs[count].type.empty() && idxs[count].type.back() == '\r') idxs[count].type.pop_back();
-            count++;
-        }
-    }
-    sysIdx.close();
-
-    for (int i = 0; i < count; i++) {
-        rebuildIndex(currentDatabase, tableName, idxs[i].name, idxs[i].col, idxs[i].type);
-    }
-}
-
 static QueryResponse insertIntoTable(const string& query, const string& currentDatabase) {
-    if (currentDatabase.empty()) return {false, "Error: primero debe ejecutar SET DATABASE", currentDatabase};
+    if (currentDatabase.empty()) {
+        return {false, "Error: primero debe ejecutar SET DATABASE", currentDatabase};
+    }
+
+    string upperQuery = upper(query);
 
     size_t nameStart = string("INSERT INTO").size();
-    string upperQuery = query;
-    transform(upperQuery.begin(), upperQuery.end(), upperQuery.begin(), ::toupper);
-    
     size_t valuesPos = upperQuery.find(" VALUES");
-    if (valuesPos == string::npos) return {false, "Error: sintaxis inválida, falta la palabra VALUES", currentDatabase};
+
+    if (valuesPos == string::npos) {
+        return {false, "Error: sintaxis inválida, falta VALUES", currentDatabase};
+    }
 
     string tableName = trim(query.substr(nameStart, valuesPos - nameStart));
-    
+
     size_t parenStart = query.find("(", valuesPos);
     size_t parenEnd = query.rfind(")");
 
     if (parenStart == string::npos || parenEnd == string::npos || parenStart >= parenEnd) {
-        return {false, "Error: sintaxis inválida, faltan los paréntesis () en VALUES", currentDatabase};
+        return {false, "Error: sintaxis inválida, faltan paréntesis en VALUES", currentDatabase};
+    }
+
+    if (tableName.empty()) {
+        return {false, "Error: nombre de tabla vacío", currentDatabase};
+    }
+
+    if (!tableExists(currentDatabase, tableName)) {
+        return {false, "Error: la tabla no existe en la base de datos", currentDatabase};
     }
 
     string valuesText = query.substr(parenStart + 1, parenEnd - parenStart - 1);
+    vector<string> values = splitCSV(valuesText);
 
-    if (tableName.empty()) return {false, "Error: nombre de tabla vacío", currentDatabase};
-    if (!tableExists(currentDatabase, tableName)) return {false, "Error: la tabla no existe en la base de datos", currentDatabase};
+    vector<string> colNames;
+    vector<string> colTypes;
+    loadColumns(currentDatabase, tableName, colNames, colTypes);
 
-    string expectedTypes[100];
-    int colCount = 0;
-    ifstream catFile("system_catalog/SystemColumns.bin", ios::binary);
-    string line;
-    string prefix = currentDatabase + "|" + tableName + "|";
-    
-    while (getline(catFile, line)) {
-        if (line.rfind(prefix, 0) == 0) {
-            string rest = line.substr(prefix.length());
-            size_t p1 = rest.find('|');
-            if (p1 != string::npos) {
-                size_t p2 = rest.find('|', p1 + 1);
-                // Extraemos el tipo de dato de la línea del catálogo
-                string colType = (p2 == string::npos) ? rest.substr(p1 + 1) : rest.substr(p1 + 1, p2 - p1 - 1);
-                if (!colType.empty() && colType.back() == '\r') colType.pop_back(); // Limpieza por si hay saltos de línea ocultos
-                expectedTypes[colCount] = trim(colType);
-                colCount++;
-            }
-        }
+    if (values.size() != colNames.size()) {
+        return {
+            false,
+            "Error de columnas: La tabla espera " + to_string(colNames.size()) +
+            " valores, pero se enviaron " + to_string(values.size()),
+            currentDatabase
+        };
     }
-    catFile.close();
 
-    string actualValues[100];
-    int valCount = 0;
-    size_t start = 0;
-    while (start <= valuesText.length()) {
-        size_t comma = valuesText.find(',', start);
-        if (comma == string::npos) {
-            actualValues[valCount++] = trim(valuesText.substr(start));
-            break;
-        } else {
-            actualValues[valCount++] = trim(valuesText.substr(start, comma - start));
-            start = comma + 1;
+    for (int i = 0; i < (int)values.size(); i++) {
+        string error;
+        if (!validateValueForType(values[i], colTypes[i], error)) {
+            return {
+                false,
+                "Error de tipo en columna '" + colNames[i] + "': " + error,
+                currentDatabase
+            };
         }
     }
 
-    if (valCount != colCount) {
-        return {false, "Error de columnas: La tabla espera " + to_string(colCount) + " valores, pero se enviaron " + to_string(valCount), currentDatabase};
+    string duplicateError;
+    if (!checkDuplicateForIndexes(currentDatabase, tableName, values, duplicateError)) {
+        return {false, duplicateError, currentDatabase};
     }
 
-    for (int i = 0; i < colCount; i++) {
-        string t = expectedTypes[i];
-        transform(t.begin(), t.end(), t.begin(), ::toupper);
-        string v = actualValues[i];
-
-        if (t.find("INT") != string::npos) {
-            if (!isValidInteger(v)) {
-                return {false, "Error de tipo (Columna " + to_string(i+1) + "): '" + v + "' no es un INTEGER válido.", currentDatabase};
-            }
-        }
-        else if (t.find("DOUBLE") != string::npos || t.find("FLOAT") != string::npos) {
-            if (!isValidDouble(v)) {
-                return {false, "Error de tipo (Columna " + to_string(i+1) + "): '" + v + "' no es un DOUBLE válido.", currentDatabase};
-            }
-        }
-        else if (t.find("VARCHAR") != string::npos || t.find("DATETIME") != string::npos) {
-            if (v.empty() || v.front() != '\'' || v.back() != '\'') {
-                return {false, "Error de tipo (Columna " + to_string(i+1) + "): '" + v + "' es un texto y debe ir entre comillas simples.", currentDatabase};
-            }
-        }
+    string normalizedLine = trim(values[0]);
+    for (int i = 1; i < (int)values.size(); i++) {
+        normalizedLine += ", " + trim(values[i]);
     }
 
-    string datosEncriptados = cifrarDatos(valuesText);
     string path = "databases/" + currentDatabase + "/" + tableName + ".bin";
     ofstream file(path, ios::app | ios::binary);
-    
-    if (!file.is_open()) return {false, "Error: No se pudo abrir el archivo para insertar los datos", currentDatabase};
 
-    file << datosEncriptados << '\n';
+    if (!file.is_open()) {
+        return {false, "Error: no se pudo abrir el archivo para insertar datos", currentDatabase};
+    }
+
+    file << cifrarDatos(normalizedLine) << '\n';
     file.close();
 
     updateAllIndexesForTable(currentDatabase, tableName);
 
     return {true, "Fila insertada exitosamente en la tabla " + tableName, currentDatabase};
 }
+
 static QueryResponse selectFromTable(const string& query, const string& currentDatabase) {
-    if (currentDatabase.empty()) return {false, "Error: primero debe ejecutar SET DATABASE", currentDatabase};
+    if (currentDatabase.empty()) {
+        return {false, "Error: primero debe ejecutar SET DATABASE", currentDatabase};
+    }
 
-    string upperQuery = query;
-    transform(upperQuery.begin(), upperQuery.end(), upperQuery.begin(), ::toupper);
+    string cleanQuery = removeSemicolon(query);
+    string upperQuery = upper(cleanQuery);
 
-    size_t fromPos = upperQuery.find("FROM ");
-    if (fromPos == string::npos) return {false, "Error: sintaxis inválida, falta FROM", currentDatabase};
+    size_t selectPos = upperQuery.find("SELECT ");
+    size_t fromPos = upperQuery.find(" FROM ");
 
-    size_t wherePos = upperQuery.find(" WHERE ");
-    string tableName = "";
-    string condition = "";
+    if (selectPos == string::npos || fromPos == string::npos) {
+        return {false, "Error: sintaxis inválida, falta SELECT o FROM", currentDatabase};
+    }
 
+    string selectedText = trim(cleanQuery.substr(selectPos + 7, fromPos - (selectPos + 7)));
+
+    size_t wherePos = upperQuery.find(" WHERE ", fromPos);
+    size_t orderPos = upperQuery.find(" ORDER BY ", fromPos);
+
+    size_t tableEnd = cleanQuery.size();
+    if (wherePos != string::npos) tableEnd = wherePos;
+    if (orderPos != string::npos && orderPos < tableEnd) tableEnd = orderPos;
+
+    string tableName = trim(cleanQuery.substr(fromPos + 6, tableEnd - (fromPos + 6)));
+
+    string conditionText = "";
     if (wherePos != string::npos) {
-        tableName = trim(query.substr(fromPos + 5, wherePos - (fromPos + 5)));
-        condition = trim(query.substr(wherePos + 7));
-        if (!condition.empty() && condition.back() == ';') condition.pop_back();
-    } else {
-        tableName = trim(query.substr(fromPos + 5));
-        if (!tableName.empty() && tableName.back() == ';') tableName.pop_back();
+        size_t condStart = wherePos + 7;
+        size_t condEnd = (orderPos != string::npos && orderPos > wherePos) ? orderPos : cleanQuery.size();
+        conditionText = trim(cleanQuery.substr(condStart, condEnd - condStart));
+    }
+
+    string orderCol = "";
+    string orderDir = "ASC";
+
+    if (orderPos != string::npos) {
+        string orderText = trim(cleanQuery.substr(orderPos + 10));
+        stringstream ss(orderText);
+        ss >> orderCol >> orderDir;
+        orderDir = upper(orderDir);
+
+        if (orderDir != "DESC") {
+            orderDir = "ASC";
+        }
     }
 
     if (tableName.rfind("System", 0) == 0) {
@@ -467,178 +853,145 @@ static QueryResponse selectFromTable(const string& query, const string& currentD
         ifstream file(path, ios::binary);
         nlohmann::json rows = nlohmann::json::array();
         string line;
-        
+
         if (file.is_open()) {
             while (getline(file, line)) {
                 if (line.empty()) continue;
                 nlohmann::json rowObj;
-                rowObj["Datos_del_Catalogo"] = line; 
+                rowObj["Datos_del_Catalogo"] = line;
                 rows.push_back(rowObj);
             }
+
             file.close();
             return {true, "Consulta exitosa al catálogo del sistema", currentDatabase, rows};
-        } else {
-            return {false, "Error: No se pudo abrir la tabla de sistema especificada", currentDatabase};
         }
+
+        return {false, "Error: no se pudo abrir la tabla de sistema especificada", currentDatabase};
     }
 
-    if (!tableExists(currentDatabase, tableName)) return {false, "Error: la tabla no existe", currentDatabase};
-
-    string whereCol = "", whereVal = "";
-    if (!condition.empty()) {
-        size_t eqPos = condition.find('=');
-        if (eqPos != string::npos) {
-            whereCol = trim(condition.substr(0, eqPos));
-            whereVal = trim(condition.substr(eqPos + 1));
-            // Quitamos las comillas
-            if (whereVal.size() >= 2 && whereVal.front() == '\'' && whereVal.back() == '\'') {
-                whereVal = whereVal.substr(1, whereVal.size() - 2);
-            }
-        }
+    if (!tableExists(currentDatabase, tableName)) {
+        return {false, "Error: la tabla no existe", currentDatabase};
     }
 
-    string cols[100];
-    int colCount = 0;
-    int whereColIndex = -1;
-    ifstream catFile("system_catalog/SystemColumns.bin", ios::binary);
-    string line;
-    string prefix = currentDatabase + "|" + tableName + "|";
-    while (getline(catFile, line)) {
-        if (line.rfind(prefix, 0) == 0) {
-            string rest = line.substr(prefix.length());
-            size_t pipe = rest.find('|');
-            if (pipe != string::npos) {
-                string cName = rest.substr(0, pipe);
-                cols[colCount] = cName;
-                if (cName == whereCol) whereColIndex = colCount;
-                colCount++;
-            }
-        }
-    }
-    catFile.close();
+    vector<string> colNames;
+    vector<string> colTypes;
+    loadColumns(currentDatabase, tableName, colNames, colTypes);
 
-    if (!condition.empty() && whereColIndex == -1) return {false, "Error: columna WHERE no existe", currentDatabase};
-
-    string indexName = "";
-    string indexType = "";
-    if (!whereCol.empty()) {
-        ifstream idxCat("system_catalog/SystemIndexes.bin", ios::binary);
-        while (getline(idxCat, line)) {
-            string searchPrefix = currentDatabase + "|" + tableName + "|";
-            if (line.rfind(searchPrefix, 0) == 0) {
-                int p1 = line.find('|');
-                int p2 = line.find('|', p1 + 1);
-                int p3 = line.find('|', p2 + 1);
-                int p4 = line.find('|', p3 + 1);
-                
-                string idxName = line.substr(p2 + 1, p3 - p2 - 1);
-                string cName = line.substr(p3 + 1, p4 - p3 - 1);
-                string type = line.substr(p4 + 1);
-                
-                if (cName == whereCol) {
-                    indexName = idxName;
-                    indexType = type;
-                    break;
-                }
-            }
-        }
-        idxCat.close();
+    if (colNames.empty()) {
+        return {false, "Error: la tabla no tiene columnas registradas", currentDatabase};
     }
 
-    string path = "databases/" + currentDatabase + "/" + tableName + ".bin";
-    nlohmann::json rows = nlohmann::json::array();
-    bool usedIndex = false;
+    vector<int> selectedIndexes;
 
-    if (!indexName.empty()) {
-        usedIndex = true;
-        string indexPath = "databases/" + currentDatabase + "/" + indexName + ".bin";
-        ifstream idxFile(indexPath, ios::binary);
-        int targetLine = -1;
-        
-        if (idxFile.is_open()) {
-            getline(idxFile, line);
-            while (getline(idxFile, line)) {
-                size_t pipe = line.find('|');
-                if (pipe != string::npos) {
-                    string key = line.substr(0, pipe);
-                    if (key == whereVal) {
-                        targetLine = stoi(line.substr(pipe + 1));
-                        break;
-                    }
-                }
-            }
-            idxFile.close();
-        }
-
-        if (targetLine != -1) {
-            ifstream file(path, ios::binary);
-            int currentLine = 1;
-            while (getline(file, line)) {
-                if (currentLine == targetLine) {
-                    string decryptedLine = descifrarDatos(line);
-                    nlohmann::json rowObj;
-                    size_t start = 0;
-                    for (int i = 0; i < colCount; ++i) {
-                        size_t comma = decryptedLine.find(',', start);
-                        string value;
-                        if (comma == string::npos) value = decryptedLine.substr(start);
-                        else { value = decryptedLine.substr(start, comma - start); start = comma + 1; }
-                        value = trim(value);
-                        if (value.size() >= 2 && value.front() == '\'' && value.back() == '\'') {
-                            value = value.substr(1, value.size() - 2);
-                        }
-                        rowObj[cols[i]] = value;
-                    }
-                    rows.push_back(rowObj);
-                    break;
-                }
-                currentLine++;
-            }
-            file.close();
+    if (selectedText == "*") {
+        for (int i = 0; i < (int)colNames.size(); i++) {
+            selectedIndexes.push_back(i);
         }
     } else {
-        ifstream file(path, ios::binary);
-        if (file.is_open()) {
-            while (getline(file, line)) {
-                if (line.empty()) continue;
-                string decryptedLine = descifrarDatos(line);
-                string values[100];
-                size_t start = 0;
-                for (int i = 0; i < colCount; ++i) {
-                    size_t comma = decryptedLine.find(',', start);
-                    if (comma == string::npos) values[i] = decryptedLine.substr(start);
-                    else { values[i] = decryptedLine.substr(start, comma - start); start = comma + 1; }
-                    values[i] = trim(values[i]);
-                    if (values[i].size() >= 2 && values[i].front() == '\'' && values[i].back() == '\'') {
-                        values[i] = values[i].substr(1, values[i].size() - 2);
-                    }
-                }
+        vector<string> selectedCols = splitCSV(selectedText);
 
-                bool match = true;
-                if (!condition.empty()) {
-                    match = (values[whereColIndex] == whereVal);
-                }
+        for (string col : selectedCols) {
+            int idx = findColumnIndex(colNames, trim(col));
 
-                if (match) {
-                    nlohmann::json rowObj;
-                    for (int i = 0; i < colCount; ++i) {
-                        rowObj[cols[i]] = values[i];
-                    }
-                    rows.push_back(rowObj);
-                }
+            if (idx == -1) {
+                return {false, "Error: columna seleccionada no existe: " + col, currentDatabase};
             }
-            file.close();
+
+            selectedIndexes.push_back(idx);
         }
     }
 
-    string msj = "Consulta exitosa.";
-    if (usedIndex) {
-        msj += " (Búsqueda ULTRA RÁPIDA usando índice '" + indexName + "' tipo " + indexType + ")";
-    } else if (!condition.empty()) {
-        msj += " (Búsqueda SECUENCIAL lenta)";
+    Condition condition = parseCondition(conditionText);
+    int whereColIndex = -1;
+
+    if (condition.active) {
+        whereColIndex = findColumnIndex(colNames, condition.column);
+
+        if (whereColIndex == -1) {
+            return {false, "Error: columna WHERE no existe: " + condition.column, currentDatabase};
+        }
     }
 
-    return {true, msj, currentDatabase, rows};
+    int orderColIndex = -1;
+    if (!orderCol.empty()) {
+        orderColIndex = findColumnIndex(colNames, orderCol);
+
+        if (orderColIndex == -1) {
+            return {false, "Error: columna ORDER BY no existe: " + orderCol, currentDatabase};
+        }
+    }
+
+    struct RowData {
+        vector<string> values;
+    };
+
+    vector<RowData> resultRows;
+
+    string path = "databases/" + currentDatabase + "/" + tableName + ".bin";
+    ifstream file(path, ios::binary);
+    string line;
+
+    if (file.is_open()) {
+        while (getline(file, line)) {
+            if (line.empty()) continue;
+
+            string decryptedLine = descifrarDatos(line);
+            vector<string> values = parseRecordValues(decryptedLine);
+
+            if ((int)values.size() < (int)colNames.size()) continue;
+
+            bool match = true;
+
+            if (condition.active) {
+                match = compareValues(values[whereColIndex], condition.op, condition.value);
+            }
+
+            if (match) {
+                RowData row;
+                row.values = values;
+                resultRows.push_back(row);
+            }
+        }
+
+        file.close();
+    }
+
+    if (orderColIndex != -1) {
+        sort(resultRows.begin(), resultRows.end(), [&](const RowData& a, const RowData& b) {
+            string va = normalizeStoredValue(a.values[orderColIndex]);
+            string vb = normalizeStoredValue(b.values[orderColIndex]);
+
+            if (isNumber(va) && isNumber(vb)) {
+                double da = stod(va);
+                double db = stod(vb);
+
+                if (orderDir == "DESC") return da > db;
+                return da < db;
+            }
+
+            if (orderDir == "DESC") return va > vb;
+            return va < vb;
+        });
+    }
+
+    nlohmann::json rows = nlohmann::json::array();
+
+    for (const RowData& row : resultRows) {
+        nlohmann::json rowObj;
+
+        for (int idx : selectedIndexes) {
+            rowObj[colNames[idx]] = normalizeStoredValue(row.values[idx]);
+        }
+
+        rows.push_back(rowObj);
+    }
+
+    string message = "Consulta exitosa.";
+    if (condition.active) {
+        message += " (Búsqueda secuencial)";
+    }
+
+    return {true, message, currentDatabase, rows};
 }
 
 static QueryResponse deleteFromTable(const string& query, const string& currentDatabase) {
@@ -646,115 +999,78 @@ static QueryResponse deleteFromTable(const string& query, const string& currentD
         return {false, "Error: primero debe ejecutar SET DATABASE", currentDatabase};
     }
 
-    string upperQuery = query;
-    transform(upperQuery.begin(), upperQuery.end(), upperQuery.begin(), ::toupper);
+    string cleanQuery = removeSemicolon(query);
+    string upperQuery = upper(cleanQuery);
 
     size_t fromPos = upperQuery.find("FROM ");
-    if (fromPos == string::npos) return {false, "Error: sintaxis inválida, falta FROM", currentDatabase};
+    if (fromPos == string::npos) {
+        return {false, "Error: sintaxis inválida, falta FROM", currentDatabase};
+    }
 
     size_t wherePos = upperQuery.find(" WHERE ");
+
     string tableName;
-    string condition = "";
+    string conditionText = "";
 
     if (wherePos != string::npos) {
-        tableName = trim(query.substr(fromPos + 5, wherePos - (fromPos + 5)));
-        condition = trim(query.substr(wherePos + 7));
-        if (!condition.empty() && condition.back() == ';') condition.pop_back();
+        tableName = trim(cleanQuery.substr(fromPos + 5, wherePos - (fromPos + 5)));
+        conditionText = trim(cleanQuery.substr(wherePos + 7));
     } else {
-        tableName = trim(query.substr(fromPos + 5));
-        if (!tableName.empty() && tableName.back() == ';') tableName.pop_back();
+        tableName = trim(cleanQuery.substr(fromPos + 5));
     }
 
-    if (!tableExists(currentDatabase, tableName)) return {false, "Error: la tabla no existe", currentDatabase};
+    if (!tableExists(currentDatabase, tableName)) {
+        return {false, "Error: la tabla no existe", currentDatabase};
+    }
 
-    string whereCol = "", whereVal = "";
-    if (!condition.empty()) {
-        size_t eqPos = condition.find('=');
-        if (eqPos != string::npos) {
-            whereCol = trim(condition.substr(0, eqPos));
-            whereVal = trim(condition.substr(eqPos + 1));
-            if (whereVal.size() >= 2 && whereVal.front() == '\'' && whereVal.back() == '\'') {
-                whereVal = whereVal.substr(1, whereVal.size() - 2);
-            }
+    vector<string> colNames;
+    vector<string> colTypes;
+    loadColumns(currentDatabase, tableName, colNames, colTypes);
+
+    Condition condition = parseCondition(conditionText);
+    int whereColIndex = -1;
+
+    if (condition.active) {
+        whereColIndex = findColumnIndex(colNames, condition.column);
+
+        if (whereColIndex == -1) {
+            return {false, "Error: la columna del WHERE no existe", currentDatabase};
         }
-    }
-
-    string cols[100];
-    int colCount = 0;
-    int targetColIndex = -1;
-    ifstream catFile("system_catalog/SystemColumns.bin", ios::binary);
-    string line;
-    string prefix = currentDatabase + "|" + tableName + "|";
-    
-    while (getline(catFile, line)) {
-        if (line.rfind(prefix, 0) == 0) {
-            string rest = line.substr(prefix.length());
-            size_t pipe = rest.find('|');
-            if (pipe != string::npos) {
-                string colName = rest.substr(0, pipe);
-                cols[colCount] = colName;
-                if (colName == whereCol) targetColIndex = colCount;
-                colCount++;
-            }
-        }
-    }
-    catFile.close();
-
-    if (!condition.empty() && targetColIndex == -1) {
-        return {false, "Error: la columna del WHERE no existe en esta tabla", currentDatabase};
     }
 
     string path = "databases/" + currentDatabase + "/" + tableName + ".bin";
     string tempPath = "databases/" + currentDatabase + "/temp_" + tableName + ".bin";
+
     ifstream file(path, ios::binary);
     ofstream tempFile(tempPath, ios::binary);
 
     int deletedCount = 0;
+    string line;
 
-    if (file.is_open()) {
-        while (getline(file, line)) {
-            if (line.empty()) continue;
+    while (getline(file, line)) {
+        if (line.empty()) continue;
 
-            string decryptedLine = descifrarDatos(line);
-            bool keepRow = true;
+        string decryptedLine = descifrarDatos(line);
+        vector<string> values = parseRecordValues(decryptedLine);
 
-            if (!condition.empty()) {
-                size_t start = 0;
-                string colValue;
-                for (int i = 0; i <= targetColIndex; ++i) {
-                    size_t comma = decryptedLine.find(',', start);
-                    if (comma == string::npos) {
-                        colValue = decryptedLine.substr(start);
-                    } else {
-                        colValue = decryptedLine.substr(start, comma - start);
-                        start = comma + 1;
-                    }
-                }
-                
-                colValue = trim(colValue);
-                if (colValue.size() >= 2 && colValue.front() == '\'' && colValue.back() == '\'') {
-                    colValue = colValue.substr(1, colValue.size() - 2);
-                }
-                
-                if (colValue == whereVal) {
-                    keepRow = false;
-                    deletedCount++;
-                }
-            } else {
-                keepRow = false;
-                deletedCount++;
-            }
+        bool deleteRow = true;
 
-            if (keepRow) {
-                tempFile << line << '\n';
-            }
+        if (condition.active) {
+            deleteRow = compareValues(values[whereColIndex], condition.op, condition.value);
         }
-        file.close();
-        tempFile.close();
 
-        remove(path.c_str());
-        rename(tempPath.c_str(), path.c_str());
+        if (deleteRow) {
+            deletedCount++;
+        } else {
+            tempFile << line << '\n';
+        }
     }
+
+    file.close();
+    tempFile.close();
+
+    remove(path.c_str());
+    rename(tempPath.c_str(), path.c_str());
 
     updateAllIndexesForTable(currentDatabase, tableName);
 
@@ -762,124 +1078,111 @@ static QueryResponse deleteFromTable(const string& query, const string& currentD
 }
 
 static QueryResponse updateTable(const string& query, const string& currentDatabase) {
-    if (currentDatabase.empty()) return {false, "Error: primero debe ejecutar SET DATABASE", currentDatabase};
+    if (currentDatabase.empty()) {
+        return {false, "Error: primero debe ejecutar SET DATABASE", currentDatabase};
+    }
 
-    string upperQuery = query;
-    transform(upperQuery.begin(), upperQuery.end(), upperQuery.begin(), ::toupper);
+    string cleanQuery = removeSemicolon(query);
+    string upperQuery = upper(cleanQuery);
 
     size_t updatePos = upperQuery.find("UPDATE ");
     size_t setPos = upperQuery.find(" SET ");
+
     if (updatePos == string::npos || setPos == string::npos) {
         return {false, "Error: sintaxis inválida, falta UPDATE o SET", currentDatabase};
     }
 
-    string tableName = trim(query.substr(updatePos + 7, setPos - (updatePos + 7)));
-    
+    string tableName = trim(cleanQuery.substr(updatePos + 7, setPos - (updatePos + 7)));
+
     size_t wherePos = upperQuery.find(" WHERE ");
-    string setPart = "", wherePart = "";
+
+    string setPart;
+    string wherePart = "";
 
     if (wherePos != string::npos) {
-        setPart = trim(query.substr(setPos + 5, wherePos - (setPos + 5)));
-        wherePart = trim(query.substr(wherePos + 7));
-        if (!wherePart.empty() && wherePart.back() == ';') wherePart.pop_back();
+        setPart = trim(cleanQuery.substr(setPos + 5, wherePos - (setPos + 5)));
+        wherePart = trim(cleanQuery.substr(wherePos + 7));
     } else {
-        setPart = trim(query.substr(setPos + 5));
-        if (!setPart.empty() && setPart.back() == ';') setPart.pop_back();
+        setPart = trim(cleanQuery.substr(setPos + 5));
     }
 
-    if (!tableExists(currentDatabase, tableName)) return {false, "Error: la tabla no existe", currentDatabase};
+    if (!tableExists(currentDatabase, tableName)) {
+        return {false, "Error: la tabla no existe", currentDatabase};
+    }
 
     size_t eqSet = setPart.find('=');
-    if (eqSet == string::npos) return {false, "Error: sintaxis de SET inválida", currentDatabase};
+    if (eqSet == string::npos) {
+        return {false, "Error: sintaxis de SET inválida", currentDatabase};
+    }
+
     string setCol = trim(setPart.substr(0, eqSet));
-    string setVal = trim(setPart.substr(eqSet + 1)); // Este lo guardaremos tal cual lo escriba el usuario
+    string setVal = trim(setPart.substr(eqSet + 1));
 
-    string whereCol = "", whereVal = "";
-    if (!wherePart.empty()) {
-        size_t eqWhere = wherePart.find('=');
-        if (eqWhere != string::npos) {
-            whereCol = trim(wherePart.substr(0, eqWhere));
-            whereVal = trim(wherePart.substr(eqWhere + 1));
-            if (whereVal.size() >= 2 && whereVal.front() == '\'' && whereVal.back() == '\'') {
-                whereVal = whereVal.substr(1, whereVal.size() - 2);
-            }
-        }
+    vector<string> colNames;
+    vector<string> colTypes;
+    loadColumns(currentDatabase, tableName, colNames, colTypes);
+
+    int setColIndex = findColumnIndex(colNames, setCol);
+
+    if (setColIndex == -1) {
+        return {false, "Error: la columna a actualizar no existe", currentDatabase};
     }
 
-    int setColIndex = -1, whereColIndex = -1, colCount = 0;
-    ifstream catFile("system_catalog/SystemColumns.bin", ios::binary);
-    string line;
-    string prefix = currentDatabase + "|" + tableName + "|";
-    
-    while (getline(catFile, line)) {
-        if (line.rfind(prefix, 0) == 0) {
-            string rest = line.substr(prefix.length());
-            size_t pipe = rest.find('|');
-            if (pipe != string::npos) {
-                string colName = rest.substr(0, pipe);
-                if (colName == setCol) setColIndex = colCount;
-                if (colName == whereCol) whereColIndex = colCount;
-                colCount++;
-            }
+    string typeError;
+    if (!validateValueForType(setVal, colTypes[setColIndex], typeError)) {
+        return {false, "Error de tipo en columna '" + setCol + "': " + typeError, currentDatabase};
+    }
+
+    Condition condition = parseCondition(wherePart);
+    int whereColIndex = -1;
+
+    if (condition.active) {
+        whereColIndex = findColumnIndex(colNames, condition.column);
+
+        if (whereColIndex == -1) {
+            return {false, "Error: la columna del WHERE no existe", currentDatabase};
         }
     }
-    catFile.close();
-
-    if (setColIndex == -1) return {false, "Error: la columna a actualizar (SET) no existe", currentDatabase};
-    if (!wherePart.empty() && whereColIndex == -1) return {false, "Error: la columna del WHERE no existe", currentDatabase};
 
     string path = "databases/" + currentDatabase + "/" + tableName + ".bin";
     string tempPath = "databases/" + currentDatabase + "/temp_" + tableName + ".bin";
+
     ifstream file(path, ios::binary);
     ofstream tempFile(tempPath, ios::binary);
 
     int updatedCount = 0;
+    string line;
 
-    if (file.is_open()) {
-        while (getline(file, line)) {
-            if (line.empty()) continue;
+    while (getline(file, line)) {
+        if (line.empty()) continue;
 
-            string decryptedLine = descifrarDatos(line);
-            
-            string values[100];
-            size_t start = 0;
-            for (int i = 0; i < colCount; ++i) {
-                size_t comma = decryptedLine.find(',', start);
-                if (comma == string::npos) {
-                    values[i] = decryptedLine.substr(start);
-                } else {
-                    values[i] = decryptedLine.substr(start, comma - start);
-                    start = comma + 1;
-                }
-            }
+        string decryptedLine = descifrarDatos(line);
+        vector<string> values = parseRecordValues(decryptedLine);
 
-            bool match = true;
-            if (!wherePart.empty()) {
-                string currentWhereVal = trim(values[whereColIndex]);
-                if (currentWhereVal.size() >= 2 && currentWhereVal.front() == '\'' && currentWhereVal.back() == '\'') {
-                    currentWhereVal = currentWhereVal.substr(1, currentWhereVal.size() - 2);
-                }
-                match = (currentWhereVal == whereVal);
-            }
+        bool match = true;
 
-            if (match) {
-                values[setColIndex] = " " + setVal;
-                updatedCount++;
-            }
-
-            string newLine = trim(values[0]);
-            for (int i = 1; i < colCount; ++i) {
-                newLine += ", " + trim(values[i]);
-            }
-
-            tempFile << cifrarDatos(newLine) << '\n';
+        if (condition.active) {
+            match = compareValues(values[whereColIndex], condition.op, condition.value);
         }
-        file.close();
-        tempFile.close();
 
-        remove(path.c_str());
-        rename(tempPath.c_str(), path.c_str());
+        if (match) {
+            values[setColIndex] = setVal;
+            updatedCount++;
+        }
+
+        string newLine = trim(values[0]);
+        for (int i = 1; i < (int)values.size(); i++) {
+            newLine += ", " + trim(values[i]);
+        }
+
+        tempFile << cifrarDatos(newLine) << '\n';
     }
+
+    file.close();
+    tempFile.close();
+
+    remove(path.c_str());
+    rename(tempPath.c_str(), path.c_str());
 
     updateAllIndexesForTable(currentDatabase, tableName);
 
@@ -887,10 +1190,11 @@ static QueryResponse updateTable(const string& query, const string& currentDatab
 }
 
 static QueryResponse createIndex(const string& query, const string& currentDatabase) {
-    if (currentDatabase.empty()) return {false, "Error: primero debe ejecutar SET DATABASE", currentDatabase};
+    if (currentDatabase.empty()) {
+        return {false, "Error: primero debe ejecutar SET DATABASE", currentDatabase};
+    }
 
-    string upperQuery = query;
-    transform(upperQuery.begin(), upperQuery.end(), upperQuery.begin(), ::toupper);
+    string upperQuery = upper(query);
 
     size_t idxPos = upperQuery.find("CREATE INDEX ");
     size_t onPos = upperQuery.find(" ON ");
@@ -898,83 +1202,97 @@ static QueryResponse createIndex(const string& query, const string& currentDatab
     size_t parenEnd = upperQuery.find(")");
     size_t ofTypePos = upperQuery.find(" OF TYPE ");
 
-    if (idxPos == string::npos || onPos == string::npos || parenStart == string::npos || parenEnd == string::npos || ofTypePos == string::npos) {
+    if (idxPos == string::npos || onPos == string::npos ||
+        parenStart == string::npos || parenEnd == string::npos ||
+        ofTypePos == string::npos) {
         return {false, "Error: sintaxis inválida. Uso: CREATE INDEX nombre ON tabla(columna) OF TYPE BTREE|BST", currentDatabase};
     }
 
     string indexName = trim(query.substr(idxPos + 13, onPos - (idxPos + 13)));
     string tableName = trim(query.substr(onPos + 4, parenStart - (onPos + 4)));
     string colName = trim(query.substr(parenStart + 1, parenEnd - (parenStart + 1)));
-    string indexType = trim(upperQuery.substr(ofTypePos + 9));
-    
-    if (!indexType.empty() && indexType.back() == ';') indexType.pop_back();
-    indexType = trim(indexType);
+    string indexType = removeSemicolon(upperQuery.substr(ofTypePos + 9));
 
     if (indexType != "BTREE" && indexType != "BST") {
-        return {false, "Error: El tipo de índice debe ser BTREE o BST", currentDatabase};
+        return {false, "Error: el tipo de índice debe ser BTREE o BST", currentDatabase};
     }
 
-    if (!tableExists(currentDatabase, tableName)) return {false, "Error: la tabla no existe", currentDatabase};
+    if (!tableExists(currentDatabase, tableName)) {
+        return {false, "Error: la tabla no existe", currentDatabase};
+    }
 
-    int targetColIndex = -1;
-    int colCount = 0;
-    ifstream catFile("system_catalog/SystemColumns.bin", ios::binary);
-    string line;
-    string prefix = currentDatabase + "|" + tableName + "|";
-    
-    while (getline(catFile, line)) {
-        if (line.rfind(prefix, 0) == 0) {
-            string rest = line.substr(prefix.length());
-            size_t pipe = rest.find('|');
-            if (pipe != string::npos) {
-                if (rest.substr(0, pipe) == colName) targetColIndex = colCount;
-                colCount++;
-            }
+    // NUEVO: solo permitir un índice por tabla
+    ifstream checkIdx("system_catalog/SystemIndexes.bin", ios::binary);
+    string idxLine;
+    string idxPrefix = currentDatabase + "|" + tableName + "|";
+
+    while (getline(checkIdx, idxLine)) {
+        if (!idxLine.empty() && idxLine.back() == '\r') {
+            idxLine.pop_back();
+        }
+
+        if (idxLine.rfind(idxPrefix, 0) == 0) {
+            checkIdx.close();
+            return {
+                false,
+                "Error: la tabla '" + tableName + "' ya tiene un índice. Solo se permite un índice por tabla.",
+                currentDatabase
+            };
         }
     }
-    catFile.close();
 
-    if (targetColIndex == -1) return {false, "Error: la columna no existe en la tabla", currentDatabase};
+    checkIdx.close();
+
+    vector<string> colNames;
+    vector<string> colTypes;
+    loadColumns(currentDatabase, tableName, colNames, colTypes);
+
+    int targetColIndex = findColumnIndex(colNames, colName);
+
+    if (targetColIndex == -1) {
+        return {false, "Error: la columna no existe en la tabla", currentDatabase};
+    }
 
     string path = "databases/" + currentDatabase + "/" + tableName + ".bin";
     ifstream file(path, ios::binary);
-    
+
     IndexRecord records[1000];
     int recordCount = 0;
     int lineNumber = 1;
+    string line;
 
-    if (file.is_open()) {
-        while (getline(file, line) && recordCount < 1000) {
-            if (line.empty()) { lineNumber++; continue; }
+    while (getline(file, line) && recordCount < 1000) {
+        if (line.empty()) {
+            lineNumber++;
+            continue;
+        }
 
-            string decryptedLine = descifrarDatos(line);
-            string colValue;
-            size_t start = 0;
-            
-            for (int i = 0; i <= targetColIndex; ++i) {
-                size_t comma = decryptedLine.find(',', start);
-                if (comma == string::npos) colValue = decryptedLine.substr(start);
-                else { colValue = decryptedLine.substr(start, comma - start); start = comma + 1; }
-            }
-            
-            colValue = trim(colValue);
-            if (colValue.size() >= 2 && colValue.front() == '\'' && colValue.back() == '\'') {
-                colValue = colValue.substr(1, colValue.size() - 2);
-            }
-            
-            for (int i = 0; i < recordCount; ++i) {
+        string decryptedLine = descifrarDatos(line);
+        vector<string> values = parseRecordValues(decryptedLine);
+
+        if (targetColIndex < (int)values.size()) {
+            string colValue = normalizeStoredValue(values[targetColIndex]);
+
+            for (int i = 0; i < recordCount; i++) {
                 if (records[i].key == colValue) {
-                    return {false, "Error: no se puede crear índice, hay valores repetidos ('" + colValue + "')", currentDatabase};
+                    file.close();
+                    return {
+                        false,
+                        "Error: no se puede crear índice, hay valores repetidos ('" + colValue + "')",
+                        currentDatabase
+                    };
                 }
             }
 
             records[recordCount].key = colValue;
             records[recordCount].recordLine = lineNumber;
             recordCount++;
-            lineNumber++;
         }
-        file.close();
+
+        lineNumber++;
     }
+
+    file.close();
 
     if (recordCount > 0) {
         quickSort(records, 0, recordCount - 1);
@@ -994,17 +1312,25 @@ static QueryResponse createIndex(const string& query, const string& currentDatab
 
     string indexPath = "databases/" + currentDatabase + "/" + indexName + ".bin";
     ofstream idxFile(indexPath, ios::binary);
+
     if (idxFile.is_open()) {
         idxFile << "INDICE|" << indexType << "|" << colName << "\n";
+
         for (int i = 0; i < recordCount; ++i) {
             idxFile << records[i].key << "|" << records[i].recordLine << "\n";
         }
+
         idxFile.close();
     }
 
     ofstream sysIdx("system_catalog/SystemIndexes.bin", ios::app | ios::binary);
+
     if (sysIdx.is_open()) {
-        sysIdx << currentDatabase << "|" << tableName << "|" << indexName << "|" << colName << "|" << indexType << "\n";
+        sysIdx << currentDatabase << "|"
+               << tableName << "|"
+               << indexName << "|"
+               << colName << "|"
+               << indexType << "\n";
         sysIdx.close();
     }
 
@@ -1049,10 +1375,10 @@ QueryResponse executeQuery(const string& rawQuery, string& currentDatabase) {
     if (startsWith(query, "UPDATE ")) {
         return updateTable(query, currentDatabase);
     }
-    
+
     if (startsWith(query, "CREATE INDEX ")) {
         return createIndex(query, currentDatabase);
     }
 
-    return {false, "Error: sentencia no soportada por Estudiante B", currentDatabase};
+    return {false, "Error: sentencia no soportada por TinySQLDb", currentDatabase};
 }
