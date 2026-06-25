@@ -18,3 +18,7 @@ add_executable(
     src/quicksort.cpp
     src/btree.cpp
 )
+
+if(WIN32)
+    target_link_libraries(TinySQLDb ws2_32)
+endif()
