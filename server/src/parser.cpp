@@ -1009,13 +1009,57 @@ static QueryResponse selectFromTable(const string& query, const string& currentD
         rows.push_back(rowObj);
     }
 
-    string message = "Consulta exitosa.";
+    bool hasIndexForWhere = false;
+
     if (condition.active) {
-        message += " (Búsqueda secuencial)";
+        ifstream idxFile("system_catalog/SystemIndexes.bin", ios::binary);
+
+        string idxLine;
+        string idxPrefix = currentDatabase + "|" + tableName + "|";
+
+        while (getline(idxFile, idxLine)) {
+            if (!idxLine.empty() && idxLine.back() == '\r') {
+                idxLine.pop_back();
+            }
+
+            if (idxLine.rfind(idxPrefix, 0) == 0) {
+
+                size_t p1 = idxLine.find('|');
+                size_t p2 = idxLine.find('|', p1 + 1);
+                size_t p3 = idxLine.find('|', p2 + 1);
+                size_t p4 = idxLine.find('|', p3 + 1);
+
+                if (p1 != string::npos &&
+                    p2 != string::npos &&
+                    p3 != string::npos &&
+                    p4 != string::npos) {
+
+                    string indexedColumn =
+                        idxLine.substr(p3 + 1, p4 - p3 - 1);
+
+                    if (indexedColumn == condition.column &&
+                        condition.op == "=") {
+                        hasIndexForWhere = true;
+                        break;
+                    }
+                }
+            }
+        }
+
+        idxFile.close();
+    }
+
+    string message = "Consulta exitosa.";
+
+    if (condition.active) {
+        if (hasIndexForWhere)
+            message += " (Búsqueda usando índice)";
+        else
+            message += " (Búsqueda secuencial)";
     }
 
     return {true, message, currentDatabase, rows};
-}
+    }
 
 static QueryResponse deleteFromTable(const string& query, const string& currentDatabase) {
     if (currentDatabase.empty()) {
