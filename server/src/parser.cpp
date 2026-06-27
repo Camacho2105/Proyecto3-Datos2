@@ -693,6 +693,22 @@ static QueryResponse createTable(const string& query, const string& currentDatab
     return {true, "Tabla creada: " + tableName, currentDatabase};
 }
 
+static bool tableHasRows(const string& currentDatabase, const string& tableName) {
+    string path = "databases/" + currentDatabase + "/" + tableName + ".bin";
+    ifstream file(path, ios::binary);
+
+    string line;
+    while (getline(file, line)) {
+        if (!trim(line).empty()) {
+            file.close();
+            return true;
+        }
+    }
+
+    file.close();
+    return false;
+}
+
 static QueryResponse dropTable(const string& query, const string& currentDatabase) {
     if (currentDatabase.empty()) {
         return {false, "Error: primero debe ejecutar SET DATABASE", currentDatabase};
@@ -708,7 +724,7 @@ static QueryResponse dropTable(const string& query, const string& currentDatabas
         return {false, "Error: la tabla no existe", currentDatabase};
     }
 
-    if (!isTableEmpty(currentDatabase, tableName)) {
+    if (tableHasRows(currentDatabase, tableName)) {
         return {false, "Error: solo se puede eliminar una tabla vacía", currentDatabase};
     }
 
@@ -957,19 +973,26 @@ static QueryResponse selectFromTable(const string& query, const string& currentD
     }
 
     if (orderColIndex != -1) {
+        orderDir = upper(trim(orderDir));
+        if (!orderDir.empty() && orderDir.back() == ';') {
+            orderDir.pop_back();
+        }
+
         sort(resultRows.begin(), resultRows.end(), [&](const RowData& a, const RowData& b) {
             string va = normalizeStoredValue(a.values[orderColIndex]);
             string vb = normalizeStoredValue(b.values[orderColIndex]);
+
+            bool desc = (orderDir == "DESC");
 
             if (isNumber(va) && isNumber(vb)) {
                 double da = stod(va);
                 double db = stod(vb);
 
-                if (orderDir == "DESC") return da > db;
+                if (desc) return da > db;
                 return da < db;
             }
 
-            if (orderDir == "DESC") return va > vb;
+            if (desc) return va > vb;
             return va < vb;
         });
     }
